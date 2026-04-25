@@ -30,7 +30,8 @@
   },
   "dependencies": {
     "zod": "^3.24.0",
-    "@supabase/supabase-js": "^2.47.0"
+    "@supabase/supabase-js": "^2.47.0",
+    "@nextabizz/shared-types": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

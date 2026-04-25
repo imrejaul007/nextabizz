@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// RFQ Status Enum
-export const RFQStatusSchema = z.enum(['open', 'quoted', 'awarded', 'cancelled']);
+// RFQ Status Enum (matches DB: rfqs.status CHECK)
+export const RFQStatusSchema = z.enum(['open', 'closed', 'awarded', 'cancelled', 'expired']);
 export type RFQStatus = z.infer<typeof RFQStatusSchema>;
 
 // RFQ Entity

@@ -17,3 +17,9 @@ export * from './rfq';
 
 // User exports
 export * from './user';
+
+// Credit Line exports
+export * from './credit-line';
+
+// Event exports
+export * from './event';

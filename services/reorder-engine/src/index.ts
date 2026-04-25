@@ -10,40 +10,48 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-// Zod Schemas for type safety
-const InventorySignalSeveritySchema = z.enum(['low', 'critical', 'out_of_stock', 'forecast_deficit']);
-const InventorySignalStatusSchema = z.enum(['pending', 'threshold_breach', 'resolved']);
-const ReorderSignalStatusSchema = z.enum(['pending', 'matched', 'ordered', 'cancelled']);
-const UrgencySchema = z.enum(['high', 'medium', 'low']);
+// Zod Schemas matching DB CHECK constraints
+// DB: severity CHECK IN ('low', 'medium', 'high', 'critical')
+const InventorySignalSeveritySchema = z.enum(['low', 'medium', 'high', 'critical']);
+// DB: signal_type CHECK IN ('low_stock', 'out_of_stock', 'expiring', 'overstock', 'movement')
+const InventorySignalTypeSchema = z.enum(['low_stock', 'out_of_stock', 'expiring', 'overstock', 'movement']);
+// DB: status CHECK IN ('pending', 'matched', 'po_created', 'dismissed')
+const ReorderSignalStatusSchema = z.enum(['pending', 'matched', 'po_created', 'dismissed']);
+// DB: urgency CHECK IN ('low', 'medium', 'high', 'urgent')
+const UrgencySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 
 type InventorySignalSeverity = z.infer<typeof InventorySignalSeveritySchema>;
-type InventorySignalStatus = z.infer<typeof InventorySignalStatusSchema>;
+type InventorySignalType = z.infer<typeof InventorySignalTypeSchema>;
 type ReorderSignalStatus = z.infer<typeof ReorderSignalStatusSchema>;
 type Urgency = z.infer<typeof UrgencySchema>;
 
-// Database row types (matching Supabase schema)
+// Database row types (matching actual Supabase schema columns)
 interface InventorySignalRow {
   id: string;
-  product_id: string;
+  merchant_id: string;
+  source: string;
+  source_product_id: string;
+  source_merchant_id: string;
   product_name: string;
+  sku?: string;
   current_stock: number;
   threshold: number;
+  unit: string;
+  category?: string;
   severity: InventorySignalSeverity;
-  status: InventorySignalStatus;
-  forecast_deficit_days?: number;
+  signal_type: InventorySignalType;
+  metadata: Record<string, unknown>;
   created_at: string;
-  updated_at: string;
 }
 
 interface ReorderSignalRow {
   id: string;
-  product_id: string;
-  product_name: string;
-  suggested_qty: number;
+  merchant_id: string;
+  inventory_signal_id?: string;
+  suggested_qty?: number;
   urgency: Urgency;
   status: ReorderSignalStatus;
   match_confidence?: number;
-  matched_supplier_ids?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -51,32 +59,34 @@ interface ReorderSignalRow {
 interface SupplierProductRow {
   id: string;
   supplier_id: string;
+  category_id?: string;
   name: string;
+  sku?: string;
   description?: string;
-  unit_price: number;
-  min_order_qty?: number;
+  unit: string;
+  moq: number;
+  price: number;
+  bulk_pricing?: { min_qty: number; price: number }[];
+  images?: string[];
+  is_active: boolean;
   delivery_days?: number;
-  in_stock: boolean;
-  suppliers?: {
-    id: string;
-    name: string;
-    rating?: number;
-    status: string;
-  };
+  created_at: string;
+  updated_at: string;
 }
 
 interface SupplierRow {
   id: string;
-  name: string;
-  rating?: number;
-  status: string;
-}
-
-interface EventLogRow {
-  id: string;
-  event_type: string;
-  payload: Record<string, unknown>;
+  business_name: string;
+  gst_number?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  categories: string[];
+  rating: number;
+  is_verified: boolean;
+  is_active: boolean;
   created_at: string;
+  updated_at: string;
 }
 
 /**
@@ -94,18 +104,16 @@ export function calculateSuggestedQty(signal: InventorySignalRow): number {
  */
 export function determineUrgency(signal: InventorySignalRow): Urgency {
   switch (signal.severity) {
-    case 'out_of_stock':
-      return 'high';
     case 'critical':
-      // If stock is less than 50% of threshold, it's high urgency
+      // If stock is less than 50% of threshold, it's urgent
       if (signal.current_stock < signal.threshold * 0.5) {
-        return 'high';
+        return 'urgent';
       }
-      return 'medium';
+      return 'high';
+    case 'high':
+      return 'high';
     case 'low':
-      return 'medium';
-    case 'forecast_deficit':
-      return 'low';
+    case 'medium':
     default:
       return 'medium';
   }
@@ -121,7 +129,7 @@ export function scoreProductMatch(
 ): number {
   // Price score: normalize to 0-1, lower price = higher score
   // Assuming max reasonable price is 10000
-  const priceScore = Math.max(0, 1 - (product.unit_price / 10000));
+  const priceScore = Math.max(0, 1 - (product.price / 10000));
 
   // Supplier rating score: 0-5 scale, higher is better
   const ratingScore = (supplier.rating ?? 3) / 5;
@@ -131,10 +139,14 @@ export function scoreProductMatch(
   const deliveryScore = Math.max(0, 1 - (deliveryDays / 30));
 
   // Availability bonus
-  const availabilityScore = product.in_stock ? 0.2 : 0;
+  const availabilityScore = product.is_active ? 0.2 : 0;
 
   // Weighted combination
   return (priceScore * 0.4) + (ratingScore * 0.35) + (deliveryScore * 0.2) + (availabilityScore * 0.05);
+}
+
+interface ScoredProduct extends SupplierProductRow {
+  matchScore: number;
 }
 
 /**
@@ -142,27 +154,26 @@ export function scoreProductMatch(
  */
 export async function matchToProducts(
   supabase: SupabaseClient,
-  signal: ReorderSignalRow,
-  productName: string
-): Promise<SupplierProductRow[]> {
+  _signal: ReorderSignalRow,
+  productName: string,
+  supplierIds?: string[]
+): Promise<ScoredProduct[]> {
   // Search for products matching the signal's product name
   // Using ilike for case-insensitive partial matching
   const searchTerm = `%${productName.toLowerCase()}%`;
 
-  const { data: products, error } = await supabase
+  let query = supabase
     .from('supplier_products')
-    .select(`
-      *,
-      suppliers:supplier_id (
-        id,
-        name,
-        rating,
-        status
-      )
-    `)
+    .select('*, suppliers:supplier_id(id, business_name, rating, is_active)')
     .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
-    .eq('in_stock', true)
+    .eq('is_active', true)
     .limit(20);
+
+  if (supplierIds && supplierIds.length > 0) {
+    query = query.in('supplier_id', supplierIds);
+  }
+
+  const { data: products, error } = await query;
 
   if (error) {
     console.error('Error fetching supplier products:', error);
@@ -178,25 +189,27 @@ export async function matchToProducts(
   const scoredProducts = products
     .map((product) => ({
       ...product,
-      score: scoreProductMatch(product, product.suppliers as SupplierRow),
+      matchScore: scoreProductMatch(product, (product as { suppliers?: SupplierRow }).suppliers as SupplierRow),
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.matchScore - a.matchScore);
 
   // Take top 3 matches
   return scoredProducts.slice(0, 3);
 }
 
 /**
- * Log an event to the event_logs table
+ * Log an event to the events table
+ * Note: events table only has: id, type, source, payload, created_at
  */
 export async function logEvent(
   supabase: SupabaseClient,
-  event: { event_type: string; payload: Record<string, unknown> }
+  event: { event_type: string; payload: Record<string, unknown>; source?: string }
 ): Promise<void> {
   const { error } = await supabase
-    .from('event_logs')
+    .from('events')
     .insert({
-      event_type: event.event_type,
+      type: event.event_type,
+      source: event.source ?? 'reorder-engine',
       payload: event.payload,
     });
 
@@ -215,12 +228,13 @@ export async function processPendingSignals(
   let created = 0;
   let matched = 0;
 
-  // Step 1: Query all pending inventory signals with threshold_breach status
+  // Step 1: Query all pending inventory signals with low_stock type
+  // Map incoming signal types to our processing types
   const { data: signals, error: signalsError } = await supabase
     .from('inventory_signals')
     .select('*')
-    .eq('status', 'threshold_breach')
-    .in('severity', ['low', 'critical', 'out_of_stock', 'forecast_deficit']);
+    .in('signal_type', ['low_stock', 'out_of_stock'])
+    .in('severity', ['low', 'medium', 'high', 'critical']);
 
   if (signalsError) {
     console.error('Error fetching inventory signals:', signalsError);
@@ -243,12 +257,12 @@ export async function processPendingSignals(
       const { data: existingSignals } = await supabase
         .from('reorder_signals')
         .select('id')
-        .eq('product_id', inventorySignal.product_id)
+        .eq('inventory_signal_id', inventorySignal.id)
         .eq('status', 'pending')
         .limit(1);
 
       if (existingSignals && existingSignals.length > 0) {
-        console.log(`Reorder signal already exists for product ${inventorySignal.product_id}, skipping`);
+        console.log(`Reorder signal already exists for signal ${inventorySignal.id}, skipping`);
         continue;
       }
 
@@ -257,33 +271,37 @@ export async function processPendingSignals(
       const urgency = determineUrgency(inventorySignal);
 
       // Insert the reorder signal
-      const reorderSignal = {
-        id: crypto.randomUUID(),
-        product_id: inventorySignal.product_id,
-        product_name: inventorySignal.product_name,
+      // DB columns: merchant_id, inventory_signal_id, suggested_qty, urgency, status
+      const reorderSignalData = {
+        merchant_id: inventorySignal.merchant_id,
+        inventory_signal_id: inventorySignal.id,
         suggested_qty: suggestedQty,
         urgency,
-        status: 'pending',
+        status: 'pending' as const,
       };
 
-      const { error: insertError } = await supabase
+      const { data: insertResult, error: insertError } = await supabase
         .from('reorder_signals')
-        .insert(reorderSignal);
+        .insert(reorderSignalData)
+        .select('id')
+        .single();
 
       if (insertError) {
-        console.error(`Failed to insert reorder signal for product ${inventorySignal.product_id}:`, insertError);
+        console.error(`Failed to insert reorder signal for signal ${inventorySignal.id}:`, insertError);
         continue;
       }
 
+      const reorderSignalId = insertResult?.id;
       created++;
-      console.log(`Created reorder signal for product ${inventorySignal.product_name} (qty: ${suggestedQty}, urgency: ${urgency})`);
+      console.log(`Created reorder signal ${reorderSignalId} for product ${inventorySignal.product_name} (qty: ${suggestedQty}, urgency: ${urgency})`);
 
       // Log the event
       await logEvent(supabase, {
         event_type: 'reorder.signal.created',
+        source: 'reorder-engine',
         payload: {
-          signal_id: reorderSignal.id,
-          product_id: inventorySignal.product_id,
+          signal_id: reorderSignalId,
+          inventory_signal_id: inventorySignal.id,
           product_name: inventorySignal.product_name,
           suggested_qty: suggestedQty,
           urgency,
@@ -293,11 +311,14 @@ export async function processPendingSignals(
       });
 
       // Step 3: Match to supplier products
-      const matchedProducts = await matchToProducts(supabase, reorderSignal as ReorderSignalRow, inventorySignal.product_name);
+      const matchedProducts = await matchToProducts(
+        supabase,
+        { id: reorderSignalId!, merchant_id: inventorySignal.merchant_id, urgency, status: 'pending' } as ReorderSignalRow,
+        inventorySignal.product_name
+      );
 
       if (matchedProducts.length > 0) {
-        const matchedSupplierIds = matchedProducts.map((p) => p.supplier_id);
-        const avgConfidence = matchedProducts.reduce((sum, p) => sum + (p as any).score, 0) / matchedProducts.length;
+        const avgConfidence = matchedProducts.reduce((sum, p) => sum + p.matchScore, 0) / matchedProducts.length;
 
         // Update the reorder signal with matches
         const { error: updateError } = await supabase
@@ -305,34 +326,27 @@ export async function processPendingSignals(
           .update({
             status: 'matched',
             match_confidence: avgConfidence,
-            matched_supplier_ids: matchedSupplierIds,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', reorderSignal.id);
+          .eq('id', reorderSignalId);
 
         if (!updateError) {
           matched++;
-          console.log(`Matched reorder signal ${reorderSignal.id} to ${matchedProducts.length} suppliers`);
+          console.log(`Matched reorder signal ${reorderSignalId} to ${matchedProducts.length} suppliers`);
 
           // Log the match event
           await logEvent(supabase, {
             event_type: 'reorder.signal.matched',
+            source: 'reorder-engine',
             payload: {
-              signal_id: reorderSignal.id,
-              product_id: inventorySignal.product_id,
+              signal_id: reorderSignalId,
+              inventory_signal_id: inventorySignal.id,
               matched_supplier_count: matchedProducts.length,
               match_confidence: avgConfidence,
-              matched_supplier_ids: matchedSupplierIds,
             },
           });
         }
       }
-
-      // Mark the inventory signal as resolved
-      await supabase
-        .from('inventory_signals')
-        .update({ status: 'resolved', updated_at: new Date().toISOString() })
-        .eq('id', inventorySignal.id);
 
     } catch (err) {
       console.error(`Error processing signal ${signal.id}:`, err);

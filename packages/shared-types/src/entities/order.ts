@@ -1,19 +1,19 @@
 import { z } from 'zod';
 
-// PO Status Enum
-export const POStatusSchema = z.enum(['draft', 'submitted', 'confirmed', 'processing', 'shipped', 'partial', 'received', 'cancelled']);
+// PO Status Enum (matches DB: purchase_orders.status CHECK)
+export const POStatusSchema = z.enum(['draft', 'sent', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'closed']);
 export type POStatus = z.infer<typeof POStatusSchema>;
 
 // Payment Status Enum
 export const PaymentStatusSchema = z.enum(['pending', 'partial', 'paid']);
 export type PaymentStatus = z.infer<typeof PaymentStatusSchema>;
 
-// Payment Method Enum
-export const PaymentMethodSchema = z.enum(['prepaid', 'net-terms', 'bnpl']);
+// Payment Method Enum (matches DB: purchase_orders.payment_method - TEXT type, allows any)
+export const PaymentMethodSchema = z.enum(['prepaid', 'net-terms', 'bnpl', 'credit', 'cod', 'upi', 'bank_transfer']);
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 
-// PO Source Enum
-export const POSourceSchema = z.enum(['manual', 'reorder_signal', 'rfq']);
+// PO Source Enum (matches DB: purchase_orders.source CHECK)
+export const POSourceSchema = z.enum(['manual', 'rfq', 'reorder', 'api', 'auto']);
 export type POSource = z.infer<typeof POSourceSchema>;
 
 // Address Entity

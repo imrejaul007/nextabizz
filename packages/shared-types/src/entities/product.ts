@@ -1,23 +1,23 @@
 import { z } from 'zod';
 
 // Product Source Enum
-export const ProductSourceSchema = z.enum(['restopapa', 'rez-merchant', 'hotel-pms']);
+export const ProductSourceSchema = z.enum(['restopapa', 'rez-merchant', 'hotel-pms', 'manual', 'inventory_system']);
 export type ProductSource = z.infer<typeof ProductSourceSchema>;
 
-// Signal Severity Enum
-export const SignalSeveritySchema = z.enum(['low', 'critical', 'out_of_stock']);
+// Signal Severity Enum (matches DB: inventory_signals.severity CHECK)
+export const SignalSeveritySchema = z.enum(['low', 'medium', 'high', 'critical']);
 export type SignalSeverity = z.infer<typeof SignalSeveritySchema>;
 
-// Signal Type Enum
-export const SignalTypeSchema = z.enum(['threshold_breach', 'manual_request', 'forecast_deficit']);
+// Signal Type Enum (matches DB: inventory_signals.signal_type CHECK)
+export const SignalTypeSchema = z.enum(['low_stock', 'out_of_stock', 'expiring', 'overstock', 'movement']);
 export type SignalType = z.infer<typeof SignalTypeSchema>;
 
-// Reorder Signal Status Enum
-export const ReorderSignalStatusSchema = z.enum(['pending', 'matched', 'po_created', 'ignored']);
+// Reorder Signal Status Enum (matches DB: reorder_signals.status CHECK)
+export const ReorderSignalStatusSchema = z.enum(['pending', 'matched', 'po_created', 'dismissed']);
 export type ReorderSignalStatus = z.infer<typeof ReorderSignalStatusSchema>;
 
-// Reorder Signal Urgency Enum
-export const ReorderUrgencySchema = z.enum(['high', 'medium', 'low']);
+// Reorder Signal Urgency Enum (matches DB: reorder_signals.urgency CHECK)
+export const ReorderUrgencySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 export type ReorderUrgency = z.infer<typeof ReorderUrgencySchema>;
 
 // Inventory Signal Entity
@@ -113,7 +113,8 @@ export const ReorderSignalSchema = z.object({
   suggestedQty: z.number().positive().optional(),
   urgency: ReorderUrgencySchema,
   status: ReorderSignalStatusSchema,
-  matchConfidence: z.number().min(0).max(100).optional(),
+  // DB stores as DECIMAL(3, 2) 0-1, normalized to 0-100 for consistency
+  matchConfidence: z.number().min(0).max(1).optional(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -133,7 +134,8 @@ export const CreateReorderSignalSchema = z.object({
   inventorySignalId: z.string().uuid().optional(),
   suggestedQty: z.number().positive().optional(),
   urgency: ReorderUrgencySchema,
-  matchConfidence: z.number().min(0).max(100).optional(),
+  // DB stores as DECIMAL(3, 2) 0-1, normalized to 0-100 for consistency
+  matchConfidence: z.number().min(0).max(1).optional(),
 });
 
 // Update Reorder Signal Input
@@ -145,6 +147,7 @@ export interface UpdateReorderSignalInput {
 // Update Reorder Signal Zod Schema
 export const UpdateReorderSignalSchema = z.object({
   status: ReorderSignalStatusSchema.optional(),
-  matchConfidence: z.number().min(0).max(100).optional(),
+  // DB stores as DECIMAL(3, 2) 0-1, normalized to 0-100 for consistency
+  matchConfidence: z.number().min(0).max(1).optional(),
 });
 

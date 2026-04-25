@@ -37,13 +37,13 @@ interface PODetailModalProps {
 
 const statusConfig: Record<POStatus, { label: string; bg: string; text: string }> = {
   draft: { label: 'Draft', bg: 'bg-gray-100', text: 'text-gray-700' },
-  submitted: { label: 'Submitted', bg: 'bg-blue-100', text: 'text-blue-700' },
+  sent: { label: 'Sent', bg: 'bg-blue-100', text: 'text-blue-700' },
   confirmed: { label: 'Confirmed', bg: 'bg-indigo-100', text: 'text-indigo-700' },
   processing: { label: 'Processing', bg: 'bg-purple-100', text: 'text-purple-700' },
   shipped: { label: 'Shipped', bg: 'bg-amber-100', text: 'text-amber-700' },
-  partial: { label: 'Partial', bg: 'bg-orange-100', text: 'text-orange-700' },
-  received: { label: 'Received', bg: 'bg-green-100', text: 'text-green-700' },
+  delivered: { label: 'Delivered', bg: 'bg-green-100', text: 'text-green-700' },
   cancelled: { label: 'Cancelled', bg: 'bg-red-100', text: 'text-red-700' },
+  closed: { label: 'Closed', bg: 'bg-gray-100', text: 'text-gray-700' },
 };
 
 const paymentConfig: Record<PaymentStatus, { label: string; bg: string; text: string }> = {
@@ -52,7 +52,7 @@ const paymentConfig: Record<PaymentStatus, { label: string; bg: string; text: st
   paid: { label: 'Paid', bg: 'bg-green-100', text: 'text-green-700' },
 };
 
-const statusFlow: POStatus[] = ['submitted', 'confirmed', 'processing', 'shipped', 'received'];
+const statusFlow: POStatus[] = ['sent', 'confirmed', 'processing', 'shipped', 'delivered'];
 
 function formatDate(date: Date | string | undefined): string {
   if (!date) return '-';
@@ -494,7 +494,7 @@ export default function PODetailModal({ poId, isOpen, onClose, onStatusUpdate }:
                     )}
 
                     {/* Track Delivery Button */}
-                    {(order.status === 'shipped' || order.status === 'partial') && (
+                    {(order.status === 'shipped') && (
                       <button className="w-full px-4 py-2 border border-[#7C3AED] text-[#7C3AED] text-sm font-medium rounded-lg hover:bg-[#7C3AED]/5 transition-colors">
                         Track Delivery
                       </button>
@@ -506,7 +506,7 @@ export default function PODetailModal({ poId, isOpen, onClose, onStatusUpdate }:
               {/* Footer Actions */}
               <div className="flex items-center justify-between p-6 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
                 <div className="flex gap-2">
-                  {(order.status === 'draft' || order.status === 'submitted') && (
+                  {(order.status === 'draft' || order.status === 'sent') && (
                     <button
                       onClick={() => handleUpdateStatus('cancelled')}
                       disabled={actionLoading}
@@ -538,7 +538,7 @@ export default function PODetailModal({ poId, isOpen, onClose, onStatusUpdate }:
                   )}
                   {order.status === 'shipped' && (
                     <button
-                      onClick={() => handleUpdateStatus('received')}
+                      onClick={() => handleUpdateStatus('delivered')}
                       disabled={actionLoading}
                       className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50"
                     >

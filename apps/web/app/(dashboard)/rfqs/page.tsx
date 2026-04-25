@@ -11,11 +11,13 @@ interface RFQStats {
   awarded: number;
 }
 
+// Status config matches DB enum: 'open', 'closed', 'awarded', 'cancelled', 'expired'
 const statusConfig: Record<RFQStatus, { label: string; bg: string; text: string }> = {
   open: { label: 'Open', bg: 'bg-blue-100', text: 'text-blue-700' },
-  quoted: { label: 'Quoted', bg: 'bg-purple-100', text: 'text-purple-700' },
+  closed: { label: 'Closed', bg: 'bg-gray-100', text: 'text-gray-700' },
   awarded: { label: 'Awarded', bg: 'bg-green-100', text: 'text-green-700' },
   cancelled: { label: 'Cancelled', bg: 'bg-red-100', text: 'text-red-700' },
+  expired: { label: 'Expired', bg: 'bg-orange-100', text: 'text-orange-700' },
 };
 
 // Mock data
@@ -31,7 +33,7 @@ const mockMyRFQs: RFQ[] = [
     unit: 'kg',
     targetPrice: 250,
     deliveryDeadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-    status: 'quoted',
+    status: 'closed',
     createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
     updatedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
   },
@@ -182,7 +184,7 @@ export default function RFQsPage() {
 
       // Calculate stats
       setStats({
-        activeRFQs: mockMyRFQs.filter(r => r.status === 'open' || r.status === 'quoted').length,
+        activeRFQs: mockMyRFQs.filter(r => r.status === 'open').length,
         quotesReceived: Object.keys(mockResponses).reduce((sum, rfqId) => sum + (mockResponses[rfqId]?.length || 0), 0),
         awarded: mockMyRFQs.filter(r => r.status === 'awarded').length,
       });
@@ -395,7 +397,7 @@ export default function RFQsPage() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {(rfq.status === 'quoted') && (
+                    {(rfq.status === 'closed') && (
                       <button
                         onClick={() => handleCompareQuotes(rfq)}
                         className="px-4 py-2 bg-[#7C3AED] text-white text-sm font-medium rounded-lg hover:bg-[#6D28D9] transition-colors"

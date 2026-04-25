@@ -72,7 +72,9 @@ export interface SupplierProduct {
 }
 
 // Bulk Pricing Schema
+// Note: DB column 'bulk_pricing' uses min_qty, but we expose it as qty for cleaner API
 export const BulkPricingSchema = z.object({
+  // Maps to DB column 'min_qty' in bulk_pricing JSONB
   qty: z.number().positive('Quantity must be positive'),
   price: z.number().positive('Price must be positive'),
 });
@@ -155,11 +157,13 @@ export interface SupplierScore {
   period: 'monthly' | 'quarterly';
   periodStart: Date;
   periodEnd: Date;
+  // DB stores rate fields as DECIMAL(5, 4) 0-1, keeping same scale in TypeScript
   onTimeDeliveryRate: number;
   qualityRejectionRate: number;
   priceConsistency: number;
   avgLeadTimeDays?: number;
   responseRate: number;
+  // DB stores overall_score as DECIMAL(3, 2) 0-5 (not 0-100)
   overallScore: number;
   creditBoost: number;
   calculatedAt: Date;
@@ -172,12 +176,15 @@ export const SupplierScoreSchema = z.object({
   period: z.enum(['monthly', 'quarterly']),
   periodStart: z.date(),
   periodEnd: z.date(),
-  onTimeDeliveryRate: z.number().min(0).max(100),
-  qualityRejectionRate: z.number().min(0).max(100),
-  priceConsistency: z.number().min(0).max(100),
+  // DB stores as DECIMAL(5, 4) 0-1
+  onTimeDeliveryRate: z.number().min(0).max(1),
+  qualityRejectionRate: z.number().min(0).max(1),
+  priceConsistency: z.number().min(0).max(1),
   avgLeadTimeDays: z.number().min(0).optional(),
-  responseRate: z.number().min(0).max(100),
-  overallScore: z.number().min(0).max(100),
+  // DB stores as DECIMAL(5, 4) 0-1
+  responseRate: z.number().min(0).max(1),
+  // DB stores as DECIMAL(3, 2) 0-5 (not 0-100)
+  overallScore: z.number().min(0).max(5),
   creditBoost: z.number().min(0).max(10),
   calculatedAt: z.date(),
 });

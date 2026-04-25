@@ -3,7 +3,7 @@ import {
   verifyWebhookSignature,
   validateRestoPapaPayload,
   handleRestoPapaInventorySignal,
-  RestoPapaHandlerContext,
+  type WebhookHandlerContext,
 } from '@nextabizz/webhook-sdk';
 
 /**
@@ -165,7 +165,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Set up handler context
-    const handlerContext: RestoPapaHandlerContext = {
+    const handlerContext: WebhookHandlerContext = {
       supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
       supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
     };

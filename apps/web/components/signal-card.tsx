@@ -23,14 +23,16 @@ const sourceColors: Record<string, string> = {
 
 const severityConfig: Record<SignalSeverity, { label: string; bg: string; text: string; border: string }> = {
   critical: { label: 'Critical', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
-  low: { label: 'Low Stock', bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
-  out_of_stock: { label: 'Out of Stock', bg: 'bg-gray-100', text: 'text-gray-700', border: 'border-gray-300' },
+  high: { label: 'High', bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200' },
+  medium: { label: 'Medium', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200' },
+  low: { label: 'Low Stock', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
 };
 
 const urgencyConfig: Record<ReorderUrgency, { label: string; color: string; bg: string }> = {
   high: { label: 'High', color: 'text-red-600', bg: 'bg-red-100' },
   medium: { label: 'Medium', color: 'text-amber-600', bg: 'bg-amber-100' },
   low: { label: 'Low', color: 'text-green-600', bg: 'bg-green-100' },
+  urgent: { label: 'Urgent', color: 'text-red-700', bg: 'bg-red-200' },
 };
 
 function formatTimeAgo(date: Date): string {

@@ -40,20 +40,21 @@ function getHeaderValue(headers: HeadersRecord, headerName: string): string | un
 }
 
 /**
- * Parses the signature header value into timestamp and signature components.
+ * Parses the signature header value into algorithm and signature components.
  * Format: "sha256=<hex>" or just "<hex>"
+ * Note: The timestamp is received separately via the timestampHeader, not in the signature.
  */
-function parseSignatureHeader(signatureHeader: string): { timestamp: string; signature: string } {
+function parseSignatureHeader(signatureHeader: string): { algorithm: string; signature: string } {
   // Handle "sha256=<signature>" format
   const parts = signatureHeader.split('=');
   if (parts.length >= 2) {
     const algorithm = parts[0];
     const signature = parts.slice(1).join('=');
-    return { timestamp: algorithm, signature };
+    return { algorithm, signature };
   }
 
   // Handle raw signature format
-  return { timestamp: '', signature: signatureHeader };
+  return { algorithm: 'sha256', signature: signatureHeader };
 }
 
 /**
@@ -94,7 +95,7 @@ export function verifyWebhookSignature(
   }
 
   // Parse signature (format: "sha256=<hex>" or just "<hex>")
-  const { timestamp: providedTimestamp, signature: providedSignature } =
+  const { algorithm: providedAlgorithm, signature: providedSignature } =
     parseSignatureHeader(signatureHeaderValue);
 
   if (!providedSignature) {

@@ -226,12 +226,16 @@ export default function SupplierDashboard() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // In production, check auth state from session/token
-    // For now, we'll assume authenticated for demo
+    // Check auth state from session/token
     const checkAuth = async () => {
-      // Simulated auth check
+      // Check for valid auth token in localStorage
       const token = localStorage.getItem('supplier_token');
-      setIsAuthenticated(!!token || true); // Default to true for demo
+      if (token) {
+        // In production, validate token with auth service
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
+      }
     };
     checkAuth();
   }, []);
@@ -248,7 +252,13 @@ export default function SupplierDashboard() {
     if (typeof window !== 'undefined') {
       window.location.href = '/';
     }
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-gray-600">Redirecting to login...</p>
+        </div>
+      </div>
+    );
   }
 
   return (

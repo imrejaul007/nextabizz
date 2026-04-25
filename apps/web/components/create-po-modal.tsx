@@ -9,7 +9,7 @@ interface CreatePOModalProps {
   open: boolean;
   onClose: () => void;
   initialItems?: POItemInput[];
-  source?: 'manual' | 'reorder_signal' | 'rfq';
+  source?: 'manual' | 'reorder' | 'rfq';
   rfqId?: string;
   onSuccess?: (orderId: string) => void;
 }
@@ -232,7 +232,7 @@ export default function CreatePOModal({
             <div>
               <h2 className="text-xl font-semibold text-gray-900">Create Purchase Order</h2>
               <p className="text-sm text-gray-500 mt-1">
-                Source: {source === 'reorder_signal' ? 'Reorder Signal' : source === 'rfq' ? 'RFQ' : 'Manual'}
+                Source: {source === 'reorder' ? 'Reorder Signal' : source === 'rfq' ? 'RFQ' : 'Manual'}
               </p>
             </div>
             <button

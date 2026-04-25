@@ -5,8 +5,6 @@ import {
   validateRestoPapaPayload,
   validateRestoPapaPayloadSafe,
   handleRestoPapaInventorySignal,
-  RestoPapaHandlerContext,
-  RestoPapaHandlerResult,
   type RestoPapaInventoryPayload,
 } from './restopapa';
 
@@ -15,8 +13,6 @@ import {
   validateRezMerchantPayload,
   validateRezMerchantPayloadSafe,
   handleRezMerchantInventorySignal,
-  RezMerchantHandlerContext,
-  RezMerchantHandlerResult,
   type RezMerchantInventoryPayload,
 } from './rez-merchant';
 
@@ -25,10 +21,29 @@ import {
   validateHotelPMSPayload,
   validateHotelPMSPayloadSafe,
   handleHotelPMSInventorySignal,
-  HotelPMSHandlerContext,
-  HotelPMSHandlerResult,
   type HotelPMSInventoryPayload,
 } from './hotel-pms';
+
+// Import common module types
+import type {
+  WebhookHandlerContext as CommonWebhookHandlerContext,
+  WebhookHandlerResult as CommonWebhookHandlerResult,
+} from './common';
+
+export {
+  mapSeverityToDB,
+  mapSignalTypeToDB,
+  createHandlerClient,
+  insertInventorySignal,
+  insertEventRecord,
+  handleError,
+} from './common';
+
+// Re-export common types
+export type {
+  WebhookHandlerContext,
+  WebhookHandlerResult,
+} from './common';
 
 // Re-export all types and functions from individual handlers
 export {
@@ -37,24 +52,18 @@ export {
   validateRestoPapaPayload,
   validateRestoPapaPayloadSafe,
   handleRestoPapaInventorySignal,
-  type RestoPapaHandlerContext,
-  type RestoPapaHandlerResult,
   type RestoPapaInventoryPayload,
   // ReZ Merchant
   RezMerchantInventoryPayloadSchema,
   validateRezMerchantPayload,
   validateRezMerchantPayloadSafe,
   handleRezMerchantInventorySignal,
-  type RezMerchantHandlerContext,
-  type RezMerchantHandlerResult,
   type RezMerchantInventoryPayload,
   // Hotel PMS
   HotelPMSInventoryPayloadSchema,
   validateHotelPMSPayload,
   validateHotelPMSPayloadSafe,
   handleHotelPMSInventorySignal,
-  type HotelPMSHandlerContext,
-  type HotelPMSHandlerResult,
   type HotelPMSInventoryPayload,
 };
 
@@ -70,11 +79,9 @@ export type WebhookEventType = 'inventory.signal.received';
 
 /**
  * Unified handler context for all webhook sources
+ * Uses the same interface as WebhookHandlerContext from common
  */
-export interface UnifiedHandlerContext {
-  supabaseUrl: string;
-  supabaseServiceKey: string;
-}
+export type UnifiedHandlerContext = CommonWebhookHandlerContext;
 
 /**
  * Result of dispatching a webhook to its handler
@@ -182,7 +189,7 @@ export async function dispatchWebhook(
           };
         }
 
-        const handlerContext: RestoPapaHandlerContext = {
+        const handlerContext: CommonWebhookHandlerContext = {
           supabaseUrl: context.supabaseUrl,
           supabaseServiceKey: context.supabaseServiceKey,
         };
@@ -216,7 +223,7 @@ export async function dispatchWebhook(
           };
         }
 
-        const handlerContext: RezMerchantHandlerContext = {
+        const handlerContext: CommonWebhookHandlerContext = {
           supabaseUrl: context.supabaseUrl,
           supabaseServiceKey: context.supabaseServiceKey,
         };
@@ -250,7 +257,7 @@ export async function dispatchWebhook(
           };
         }
 
-        const handlerContext: HotelPMSHandlerContext = {
+        const handlerContext: CommonWebhookHandlerContext = {
           supabaseUrl: context.supabaseUrl,
           supabaseServiceKey: context.supabaseServiceKey,
         };

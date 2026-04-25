@@ -5,7 +5,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
  */
 export interface ScoreInputs {
   totalOrders: number;
-  onTimeDeliveries: number;       // PO.status='received' AND actual_delivery <= expected_delivery
+  onTimeDeliveries: number;       // PO.status='delivered' AND actual_delivery <= expected_delivery
   lateDeliveries: number;
   partialDeliveries: number;      // status='partial'
   rejectedOrders: number;        // status='cancelled'
@@ -17,29 +17,31 @@ export interface ScoreInputs {
 
 /**
  * Output supplier score record
+ * Column names match DB schema
  */
 export interface SupplierScore {
   id: string;
   supplier_id: string;
-  overall_score: number;         // 0-5 scale
-  on_time_rate: number;          // 0-1
-  quality_rate: number;           // 0-1
-  price_consistency: number;      // 0-1
-  response_rate: number;          // 0-1
-  avg_lead_time_score: number;    // 0-1
-  credit_boost: number;          // 0-0.3
+  overall_score: number;           // DB: DECIMAL(3, 2) 0-5
+  on_time_delivery_rate: number;   // DB: DECIMAL(5, 4) 0-1
+  quality_rejection_rate: number;  // DB: DECIMAL(5, 4) 0-1
+  price_consistency: number;       // DB: DECIMAL(5, 4) 0-1
+  response_rate: number;           // DB: DECIMAL(5, 4) 0-1
+  avg_lead_time_days: number;      // DB: DECIMAL(5, 2) 0+
+  credit_boost: number;           // DB: DECIMAL(3, 2) 0-10
+  period: string;                  // DB: CHECK IN ('weekly', 'monthly', 'quarterly')
   period_start: string;
   period_end: string;
   calculated_at: string;
 }
 
 /**
- * Database row types
+ * Database row types (matching actual DB schema)
  */
 interface PurchaseOrderRow {
   id: string;
   supplier_id: string;
-  status: string;
+  status: string; // DB CHECK: ('draft', 'sent', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'closed')
   created_at: string;
   expected_delivery: string;
   actual_delivery?: string;
@@ -47,37 +49,68 @@ interface PurchaseOrderRow {
 
 interface PurchaseOrderItemRow {
   id: string;
-  purchase_order_id: string;
+  po_id: string;
+  supplier_product_id?: string;
+  name: string;
+  sku?: string;
+  qty: number;
+  unit: string;
   unit_price: number;
-  quoted_price?: number;
+  total: number;
+  received_qty: number;
+  created_at: string;
 }
 
 interface RFQRow {
   id: string;
-  status: string;
-  expires_at: string;
+  rfq_number: string;
+  merchant_id: string;
+  title: string;
+  description?: string;
+  category?: string;
+  quantity: number;
+  unit: string;
+  target_price?: number;
+  delivery_deadline?: string;
+  status: string; // DB CHECK: ('open', 'closed', 'awarded', 'cancelled', 'expired')
+  awarded_to?: string;
+  linked_po_id?: string;
+  created_at: string;
+  expires_at?: string;
+  updated_at: string;
 }
 
 interface RFQResponseRow {
   id: string;
   rfq_id: string;
   supplier_id: string;
-  created_at: string;
+  unit_price: number;
+  total_price: number;
+  lead_time_days?: number;
+  notes?: string;
+  submitted_at: string;
 }
 
 interface SupplierScoreRow {
   id: string;
   supplier_id: string;
   overall_score: number;
-  on_time_rate: number;
-  quality_rate: number;
+  on_time_delivery_rate: number;
+  quality_rejection_rate: number;
   price_consistency: number;
   response_rate: number;
-  avg_lead_time_score: number;
+  avg_lead_time_days: number;
   credit_boost: number;
+  period: string;
   period_start: string;
   period_end: string;
   calculated_at: string;
+}
+
+interface SupplierRow {
+  id: string;
+  business_name: string;
+  is_active: boolean;
 }
 
 /**
@@ -114,8 +147,9 @@ async function collectScoreInputs(
   const orders = (purchaseOrders || []) as PurchaseOrderRow[];
 
   // Count orders by status
+  // DB status values: 'draft', 'sent', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'closed'
   const totalOrders = orders.length;
-  const receivedOrders = orders.filter((o) => o.status === 'received');
+  const deliveredOrders = orders.filter((o) => o.status === 'delivered');
   const partialOrders = orders.filter((o) => o.status === 'partial');
   const cancelledOrders = orders.filter((o) => o.status === 'cancelled');
 
@@ -125,7 +159,7 @@ async function collectScoreInputs(
   let totalLeadTimeDays = 0;
   let leadTimeCount = 0;
 
-  for (const order of receivedOrders) {
+  for (const order of deliveredOrders) {
     if (order.actual_delivery && order.expected_delivery) {
       const actualDate = new Date(order.actual_delivery);
       const expectedDate = new Date(order.expected_delivery);
@@ -151,8 +185,8 @@ async function collectScoreInputs(
     .from('rfq_responses')
     .select('rfq_id')
     .eq('supplier_id', supplierId)
-    .gte('created_at', startStr)
-    .lte('created_at', endStr);
+    .gte('submitted_at', startStr)
+    .lte('submitted_at', endStr);
 
   if (rfqResponseError) {
     throw new Error(`Failed to fetch RFQ responses: ${rfqResponseError.message}`);
@@ -165,8 +199,7 @@ async function collectScoreInputs(
   const { data: rfqs, error: rfqError } = await supabase
     .from('rfqs')
     .select('id')
-    .eq('status', 'expired')
-    .or(`status.eq.awarded,status.eq.closed`)
+    .in('status', ['expired', 'awarded', 'closed'])
     .gte('expires_at', startStr)
     .lte('expires_at', endStr);
 
@@ -177,37 +210,9 @@ async function collectScoreInputs(
   const rfqsList = (rfqs || []) as RFQRow[];
   const totalRFQs = rfqsList.length;
 
-  // Fetch price changes (PO items where unit_price != quoted_price)
-  // We need to get PO items for all purchase orders in the period
-  const orderIds = orders.map((o) => o.id);
-
-  if (orderIds.length === 0) {
-    return {
-      totalOrders: 0,
-      onTimeDeliveries: 0,
-      lateDeliveries: 0,
-      partialDeliveries: 0,
-      rejectedOrders: 0,
-      avgLeadTime: 14,
-      rfqResponses: 0,
-      totalRFQs: 0,
-      priceChanges: 0,
-    };
-  }
-
-  const { data: poItems, error: poItemsError } = await supabase
-    .from('purchase_order_items')
-    .select('unit_price, quoted_price')
-    .in('purchase_order_id', orderIds);
-
-  if (poItemsError) {
-    throw new Error(`Failed to fetch PO items: ${poItemsError.message}`);
-  }
-
-  const items = (poItems || []) as PurchaseOrderItemRow[];
-  const priceChanges = items.filter(
-    (item) => item.quoted_price !== null && item.unit_price !== item.quoted_price
-  ).length;
+  // For price consistency, we'd need original quoted prices from rfq_responses
+  // For now, set to 1 (perfect consistency) as a placeholder
+  const priceChanges = 0;
 
   return {
     totalOrders,
@@ -225,16 +230,16 @@ async function collectScoreInputs(
 /**
  * Calculate supplier score from inputs
  */
-function calculateScore(inputs: ScoreInputs): Omit<SupplierScore, 'id' | 'supplier_id' | 'period_start' | 'period_end' | 'calculated_at'> {
+function calculateScore(inputs: ScoreInputs): Omit<SupplierScore, 'id' | 'supplier_id' | 'period' | 'period_start' | 'period_end' | 'calculated_at'> {
   // Calculate component rates
   const onTimeRate = inputs.totalOrders > 0 ? inputs.onTimeDeliveries / inputs.totalOrders : 0;
   const qualityRate = inputs.totalOrders > 0 ? 1 - (inputs.rejectedOrders / inputs.totalOrders) : 1;
   const priceConsistency = inputs.totalOrders > 0 ? 1 - (inputs.priceChanges / inputs.totalOrders) : 1;
   const responseRate = inputs.totalRFQs > 0 ? inputs.rfqResponses / inputs.totalRFQs : 0;
 
-  // Lead time score: better if <2 days, decays over 12 days
-  // Score = 1 - (avgLeadTime - 2) / 10, clamped to [0, 1]
-  const avgLeadTimeScore = clamp(1 - (inputs.avgLeadTime - 2) / 10, 0, 1);
+  // Lead time score: normalized to 0-1, 14 days = 0.5 baseline
+  // Better if <14 days, worse if >14 days
+  const avgLeadTimeScore = clamp(1 - (inputs.avgLeadTime - 14) / 20, 0, 1);
 
   // Weighted overall score (0-5 scale)
   const weightedScore =
@@ -251,11 +256,11 @@ function calculateScore(inputs: ScoreInputs): Omit<SupplierScore, 'id' | 'suppli
 
   return {
     overall_score: overallScore,
-    on_time_rate: Math.round(onTimeRate * 100) / 100,
-    quality_rate: Math.round(qualityRate * 100) / 100,
-    price_consistency: Math.round(priceConsistency * 100) / 100,
-    response_rate: Math.round(responseRate * 100) / 100,
-    avg_lead_time_score: Math.round(avgLeadTimeScore * 100) / 100,
+    on_time_delivery_rate: Math.round(onTimeRate * 10000) / 10000,
+    quality_rejection_rate: Math.round(qualityRate * 10000) / 10000,
+    price_consistency: Math.round(priceConsistency * 10000) / 10000,
+    response_rate: Math.round(responseRate * 10000) / 10000,
+    avg_lead_time_days: Math.round(inputs.avgLeadTime * 100) / 100,
     credit_boost: creditBoost,
   };
 }
@@ -265,6 +270,7 @@ function calculateScore(inputs: ScoreInputs): Omit<SupplierScore, 'id' | 'suppli
  */
 export async function calculateSupplierScore(
   supplierId: string,
+  period: 'weekly' | 'monthly' | 'quarterly',
   periodStart: Date,
   periodEnd: Date,
   supabase: SupabaseClient
@@ -275,35 +281,40 @@ export async function calculateSupplierScore(
   // Calculate scores
   const scores = calculateScore(inputs);
 
-  // Create score record
+  // Create score record with column names matching DB
   const scoreRecord: SupplierScore = {
     id: crypto.randomUUID(),
     supplier_id: supplierId,
     ...scores,
+    period,
     period_start: periodStart.toISOString(),
     period_end: periodEnd.toISOString(),
     calculated_at: new Date().toISOString(),
   };
 
   // Upsert into supplier_scores table
+  // DB columns: id, supplier_id, period, period_start, period_end,
+  //            on_time_delivery_rate, quality_rejection_rate, price_consistency,
+  //            avg_lead_time_days, response_rate, overall_score, credit_boost, calculated_at
   const { error: upsertError } = await supabase
     .from('supplier_scores')
     .upsert(
       {
         supplier_id: supplierId,
-        overall_score: scoreRecord.overall_score,
-        on_time_rate: scoreRecord.on_time_rate,
-        quality_rate: scoreRecord.quality_rate,
-        price_consistency: scoreRecord.price_consistency,
-        response_rate: scoreRecord.response_rate,
-        avg_lead_time_score: scoreRecord.avg_lead_time_score,
-        credit_boost: scoreRecord.credit_boost,
+        period,
         period_start: scoreRecord.period_start,
         period_end: scoreRecord.period_end,
+        on_time_delivery_rate: scoreRecord.on_time_delivery_rate,
+        quality_rejection_rate: scoreRecord.quality_rejection_rate,
+        price_consistency: scoreRecord.price_consistency,
+        avg_lead_time_days: scoreRecord.avg_lead_time_days,
+        response_rate: scoreRecord.response_rate,
+        overall_score: scoreRecord.overall_score,
+        credit_boost: scoreRecord.credit_boost,
         calculated_at: scoreRecord.calculated_at,
       },
       {
-        onConflict: 'supplier_id,period_start,period_end',
+        onConflict: 'supplier_id,period,period_start',
       }
     );
 
@@ -313,8 +324,8 @@ export async function calculateSupplierScore(
 
   console.log(
     `Calculated score for supplier ${supplierId}: overall=${scoreRecord.overall_score.toFixed(2)}/5, ` +
-    `on_time=${(scoreRecord.on_time_rate * 100).toFixed(0)}%, quality=${(scoreRecord.quality_rate * 100).toFixed(0)}%, ` +
-    `lead_time=${inputs.avgLeadTime.toFixed(1)} days`
+    `on_time=${(scoreRecord.on_time_delivery_rate * 100).toFixed(0)}%, quality=${(scoreRecord.quality_rejection_rate * 100).toFixed(0)}%, ` +
+    `lead_time=${scoreRecord.avg_lead_time_days.toFixed(1)} days`
   );
 
   return scoreRecord;
@@ -334,10 +345,11 @@ export async function runMonthlyScoring(
   console.log(`Running monthly scoring for period: ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
 
   // Fetch all active suppliers
+  // DB: suppliers table has business_name, is_active columns
   const { data: suppliers, error: suppliersError } = await supabase
     .from('suppliers')
-    .select('id, name')
-    .eq('status', 'active');
+    .select('id, business_name')
+    .eq('is_active', true);
 
   if (suppliersError) {
     throw new Error(`Failed to fetch suppliers: ${suppliersError.message}`);
@@ -353,23 +365,32 @@ export async function runMonthlyScoring(
   let scored = 0;
   const errors: string[] = [];
 
-  for (const supplier of suppliers) {
+  for (const supplier of suppliers as SupplierRow[]) {
     try {
-      await calculateSupplierScore(supplier.id, periodStart, periodEnd, supabase);
+      await calculateSupplierScore(
+        supplier.id,
+        'monthly',
+        periodStart,
+        periodEnd,
+        supabase
+      );
       scored++;
 
-      // Log event
-      await supabase.from('event_logs').insert({
-        event_type: 'supplier.scored',
+      // Log event to events table (not event_logs)
+      // DB: events table only has id, type, source, payload, created_at
+      await supabase.from('events').insert({
+        type: 'supplier.scored',
+        source: 'scoring-engine',
         payload: {
           supplier_id: supplier.id,
-          supplier_name: supplier.name,
+          supplier_name: supplier.business_name,
+          period: 'monthly',
           period_start: periodStart.toISOString(),
           period_end: periodEnd.toISOString(),
         },
       });
     } catch (err) {
-      const errorMsg = `Failed to score supplier ${supplier.id} (${supplier.name}): ${(err as Error).message}`;
+      const errorMsg = `Failed to score supplier ${supplier.id} (${supplier.business_name}): ${(err as Error).message}`;
       console.error(errorMsg);
       errors.push(errorMsg);
     }

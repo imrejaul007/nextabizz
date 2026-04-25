@@ -4,8 +4,8 @@ import { z } from 'zod';
 export const MerchantCategorySchema = z.enum(['restaurant', 'hotel', 'salon', 'retail', 'pharmacy']);
 export type MerchantCategory = z.infer<typeof MerchantCategorySchema>;
 
-// Merchant Source Enum
-export const MerchantSourceSchema = z.enum(['rez-merchant', 'restopapa', 'hotel-pms']);
+// Merchant Source Enum (matches DB: merchants.source CHECK and seed data)
+export const MerchantSourceSchema = z.enum(['rez', 'restopapa', 'hotel-pms', 'manual', 'api', 'inventory_system']);
 export type MerchantSource = z.infer<typeof MerchantSourceSchema>;
 
 // Merchant Entity

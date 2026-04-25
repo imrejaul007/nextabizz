@@ -5,7 +5,8 @@ import type { PurchaseOrder, POStatus, PaymentStatus } from '@nextabizz/shared-t
 import CreatePOModal from '@/components/create-po-modal';
 import PODetailModal from '@/components/po-detail-modal';
 
-type TabType = 'all' | 'draft' | 'submitted' | 'confirmed' | 'shipped' | 'received';
+// Tab type matches POStatus enum
+type TabType = 'all' | 'draft' | 'sent' | 'confirmed' | 'processing' | 'shipped' | 'delivered';
 type PaymentFilter = 'all' | 'pending' | 'partial' | 'paid';
 
 interface OrderStats {
@@ -18,21 +19,23 @@ interface OrderStats {
 const tabs: { value: TabType; label: string }[] = [
   { value: 'all', label: 'All Orders' },
   { value: 'draft', label: 'Draft' },
-  { value: 'submitted', label: 'Submitted' },
+  { value: 'sent', label: 'Sent' },
   { value: 'confirmed', label: 'Confirmed' },
+  { value: 'processing', label: 'Processing' },
   { value: 'shipped', label: 'Shipped' },
-  { value: 'received', label: 'Received' },
+  { value: 'delivered', label: 'Delivered' },
 ];
 
+// Status config matches DB enum: draft, sent, confirmed, processing, shipped, delivered, cancelled, closed
 const statusConfig: Record<POStatus, { label: string; bg: string; text: string }> = {
   draft: { label: 'Draft', bg: 'bg-gray-100', text: 'text-gray-700' },
-  submitted: { label: 'Submitted', bg: 'bg-blue-100', text: 'text-blue-700' },
+  sent: { label: 'Sent', bg: 'bg-blue-100', text: 'text-blue-700' },
   confirmed: { label: 'Confirmed', bg: 'bg-indigo-100', text: 'text-indigo-700' },
   processing: { label: 'Processing', bg: 'bg-purple-100', text: 'text-purple-700' },
   shipped: { label: 'Shipped', bg: 'bg-amber-100', text: 'text-amber-700' },
-  partial: { label: 'Partial', bg: 'bg-orange-100', text: 'text-orange-700' },
-  received: { label: 'Received', bg: 'bg-green-100', text: 'text-green-700' },
+  delivered: { label: 'Delivered', bg: 'bg-green-100', text: 'text-green-700' },
   cancelled: { label: 'Cancelled', bg: 'bg-red-100', text: 'text-red-700' },
+  closed: { label: 'Closed', bg: 'bg-gray-200', text: 'text-gray-600' },
 };
 
 const paymentConfig: Record<PaymentStatus, { label: string; bg: string; text: string }> = {
@@ -67,7 +70,7 @@ const mockOrders: PurchaseOrder[] = [
     netAmount: 8500,
     paymentStatus: 'paid',
     paymentMethod: 'prepaid',
-    source: 'reorder_signal',
+    source: 'reorder',
     createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
     updatedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
   },
@@ -90,7 +93,7 @@ const mockOrders: PurchaseOrder[] = [
     orderNumber: 'PO-2024-0004',
     merchantId: 'merchant-1',
     supplierId: 'sup-3',
-    status: 'received',
+    status: 'delivered',
     subtotal: 12500,
     netAmount: 12500,
     paymentStatus: 'paid',
@@ -104,7 +107,7 @@ const mockOrders: PurchaseOrder[] = [
     orderNumber: 'PO-2024-0005',
     merchantId: 'merchant-1',
     supplierId: 'sup-2',
-    status: 'submitted',
+    status: 'sent',
     subtotal: 9800,
     netAmount: 9800,
     paymentStatus: 'pending',
@@ -348,7 +351,7 @@ export default function OrdersPage() {
             >
               <option value="all">All Status</option>
               <option value="draft">Draft</option>
-              <option value="submitted">Submitted</option>
+              <option value="sent">Sent</option>
               <option value="confirmed">Confirmed</option>
               <option value="processing">Processing</option>
               <option value="shipped">Shipped</option>
@@ -521,7 +524,7 @@ export default function OrdersPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
                         </button>
-                        {(order.status === 'draft' || order.status === 'submitted') && (
+                        {(order.status === 'draft' || order.status === 'sent') && (
                           <button
                             className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                             title="Edit"

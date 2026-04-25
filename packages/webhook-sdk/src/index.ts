@@ -19,29 +19,26 @@ export {
 
 // Handler exports
 export {
+  // Common utilities
+  mapSeverityToDB,
+  mapSignalTypeToDB,
   // RestoPapa
   RestoPapaInventoryPayloadSchema,
   validateRestoPapaPayload,
   validateRestoPapaPayloadSafe,
   handleRestoPapaInventorySignal,
-  type RestoPapaHandlerContext,
-  type RestoPapaHandlerResult,
   type RestoPapaInventoryPayload,
   // ReZ Merchant
   RezMerchantInventoryPayloadSchema,
   validateRezMerchantPayload,
   validateRezMerchantPayloadSafe,
   handleRezMerchantInventorySignal,
-  type RezMerchantHandlerContext,
-  type RezMerchantHandlerResult,
   type RezMerchantInventoryPayload,
   // Hotel PMS
   HotelPMSInventoryPayloadSchema,
   validateHotelPMSPayload,
   validateHotelPMSPayloadSafe,
   handleHotelPMSInventorySignal,
-  type HotelPMSHandlerContext,
-  type HotelPMSHandlerResult,
   type HotelPMSInventoryPayload,
   // Dispatcher
   dispatchWebhook,
@@ -51,6 +48,8 @@ export {
   type WebhookSource,
   type WebhookEventType,
   type UnifiedHandlerContext,
+  type WebhookHandlerContext,
+  type WebhookHandlerResult,
   type DispatchResult,
   type UnifiedWebhookPayload,
   identifyWebhookSource,

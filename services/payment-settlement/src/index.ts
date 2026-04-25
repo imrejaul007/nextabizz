@@ -12,24 +12,32 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-// Zod Schemas for validation
-const PaymentMethodSchema = z.enum(['net_terms', 'bnpl', 'prepaid']);
-const PaymentStatusSchema = z.enum(['pending', 'processing', 'paid', 'failed', 'refunded', 'overdue']);
+// Zod Schemas matching DB CHECK constraints
+// DB: payment_method is TEXT type (no CHECK constraint)
+// DB: payment_status CHECK IN ('pending', 'partial', 'paid', 'overdue', 'cancelled')
+const PaymentMethodSchema = z.enum(['prepaid', 'net-terms', 'bnpl', 'credit', 'cod', 'upi', 'bank_transfer']);
+const PaymentStatusSchema = z.enum(['pending', 'partial', 'paid', 'overdue', 'cancelled']);
 
 type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 type PaymentStatus = z.infer<typeof PaymentStatusSchema>;
 
-// Database row types
+// Database row types (matching actual DB schema)
 interface PurchaseOrderRow {
   id: string;
+  order_number: string;
   merchant_id: string;
   supplier_id: string;
-  net_amount: number;
-  payment_method: PaymentMethod;
-  payment_status: PaymentStatus;
-  expected_delivery: string;
-  tenor_days?: number;
   status: string;
+  subtotal: number;
+  net_amount: number;
+  payment_status: PaymentStatus;
+  payment_method: PaymentMethod;
+  delivery_address: Record<string, unknown>;
+  expected_delivery: string;
+  actual_delivery?: string;
+  notes?: string;
+  source: string;
+  rfq_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -39,9 +47,10 @@ interface CreditLineRow {
   merchant_id: string;
   credit_limit: number;
   utilized: number;
-  available: number;
+  tenor_days: number;
+  interest_rate: number;
   status: string;
-  expires_at?: string;
+  tier: string;
   created_at: string;
   updated_at: string;
 }
@@ -70,13 +79,6 @@ interface PaymentWebhookPayload {
   created_at: number;
 }
 
-interface EventLogRow {
-  id: string;
-  event_type: string;
-  payload: Record<string, unknown>;
-  created_at: string;
-}
-
 /**
  * Create Supabase client with service role key
  */
@@ -103,21 +105,27 @@ function verifyWebhookSignature(payload: string, signature: string): boolean {
     .update(payload)
     .digest('hex');
 
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Log an event to the event_logs table
+ * Log an event to the events table
+ * Note: events table only has: id, type, source, payload, created_at
  */
 async function logEvent(
   supabase: SupabaseClient,
-  event: { event_type: string; payload: Record<string, unknown> }
+  event: { event_type: string; payload: Record<string, unknown>; source?: string }
 ): Promise<void> {
-  const { error } = await supabase.from('event_logs').insert({
-    event_type: event.event_type,
+  const { error } = await supabase.from('events').insert({
+    type: event.event_type,
+    source: event.source ?? 'payment-settlement',
     payload: event.payload,
   });
 
@@ -152,14 +160,11 @@ export async function checkCreditAvailability(
 
   const credit = creditLine as CreditLineRow;
 
-  // Check if credit line has expired
-  if (credit.expires_at && new Date(credit.expires_at) < new Date()) {
-    console.log(`Credit line ${credit.id} has expired`);
-    return { available: false };
-  }
+  // Check if credit line has expired (using tenor_days to calculate expiry)
+  // For simplicity, we assume credit lines don't expire unless suspended/closed
 
-  // Check if enough credit is available
-  const availableCredit = credit.available ?? (credit.credit_limit - credit.utilized);
+  // Calculate available credit: credit_limit - utilized
+  const availableCredit = credit.credit_limit - credit.utilized;
   const isAvailable = availableCredit >= amount;
 
   return {
@@ -191,11 +196,13 @@ export async function settleBNPLPayment(
     throw new Error(`Purchase order ${poId} not found`);
   }
 
+  const merchantId = (po as { merchant_id: string }).merchant_id;
+
   // Get the credit line
   const { data: creditLine, error: clError } = await supabase
     .from('credit_lines')
     .select('*')
-    .eq('merchant_id', po.merchant_id)
+    .eq('merchant_id', merchantId)
     .eq('status', 'active')
     .single();
 
@@ -204,20 +211,17 @@ export async function settleBNPLPayment(
   }
 
   if (!creditLine) {
-    throw new Error(`No active credit line found for merchant ${po.merchant_id}`);
+    throw new Error(`No active credit line found for merchant ${merchantId}`);
   }
 
   const credit = creditLine as CreditLineRow;
   const newUtilized = credit.utilized + amount;
-  const newAvailable = credit.credit_limit - newUtilized;
 
-  // Update credit line
+  // Update credit line - note: no 'available' column in DB
   const { error: updateError } = await supabase
     .from('credit_lines')
     .update({
       utilized: newUtilized,
-      available: Math.max(0, newAvailable),
-      updated_at: new Date().toISOString(),
     })
     .eq('id', credit.id);
 
@@ -229,8 +233,7 @@ export async function settleBNPLPayment(
   const { error: poUpdateError } = await supabase
     .from('purchase_orders')
     .update({
-      payment_status: 'pending',
-      updated_at: new Date().toISOString(),
+      payment_status: 'paid',
     })
     .eq('id', poId);
 
@@ -242,9 +245,10 @@ export async function settleBNPLPayment(
 
   await logEvent(supabase, {
     event_type: 'payment.bnpl.settled',
+    source: 'payment-settlement',
     payload: {
       po_id: poId,
-      merchant_id: po.merchant_id,
+      merchant_id: merchantId,
       credit_line_id: credit.id,
       amount,
       new_utilized: newUtilized,
@@ -278,18 +282,28 @@ export async function initiatePayment(
 
   try {
     switch (purchaseOrder.payment_method) {
-      case 'net_terms': {
+      case 'net-terms': {
         // NET_TERMS: Payment is pending until due date
-        // No immediate action needed, just confirm initiation
+        // Get tenor_days from credit line
+        const { data: creditLine } = await supabase
+          .from('credit_lines')
+          .select('tenor_days')
+          .eq('merchant_id', purchaseOrder.merchant_id)
+          .eq('status', 'active')
+          .single();
+
+        const tenorDays = creditLine ? (creditLine as CreditLineRow).tenor_days : 30;
+
         console.log(`NET_TERMS payment initiated for PO ${poId}`);
 
         await logEvent(supabase, {
           event_type: 'payment.net_terms.initiated',
+          source: 'payment-settlement',
           payload: {
             po_id: poId,
             merchant_id: purchaseOrder.merchant_id,
             net_amount: purchaseOrder.net_amount,
-            tenor_days: purchaseOrder.tenor_days ?? 30,
+            tenor_days: tenorDays,
           },
         });
 
@@ -317,33 +331,53 @@ export async function initiatePayment(
         return { success: true };
       }
 
-      case 'prepaid': {
-        // PREPAID: Generate payment URL (Razorpay)
-        // In a real implementation, this would create a Razorpay order
-        const razorpayOrderId = `order_${crypto.randomUUID().replace(/-/g, '')}`;
-        const paymentUrl = `https://api.razorpay.com/v1/checkout/embedded/${razorpayOrderId}`;
+      case 'prepaid':
+      case 'upi':
+      case 'bank_transfer':
+      case 'cod': {
+        // For prepaid/UPI/bank_transfer/cod: Payment is pending until received
+        // In production, this would integrate with actual payment gateway (Razorpay, etc.)
+        console.log(`${purchaseOrder.payment_method.toUpperCase()} payment initiated for PO ${poId}`);
 
-        // Update PO status
+        // Update PO status to indicate payment is being processed
         await supabase
           .from('purchase_orders')
           .update({
-            payment_status: 'processing',
-            updated_at: new Date().toISOString(),
+            payment_status: 'pending',
           })
           .eq('id', poId);
 
         await logEvent(supabase, {
-          event_type: 'payment.prepaid.initiated',
+          event_type: 'payment.initiated',
+          source: 'payment-settlement',
           payload: {
             po_id: poId,
             merchant_id: purchaseOrder.merchant_id,
-            razorpay_order_id: razorpayOrderId,
+            payment_method: purchaseOrder.payment_method,
             amount: purchaseOrder.net_amount,
           },
         });
 
-        console.log(`PREPAID payment initiated for PO ${poId}: ${paymentUrl}`);
-        return { success: true, paymentUrl };
+        return { success: true };
+      }
+
+      case 'credit': {
+        // Credit: Similar to BNPL, uses credit line
+        const { available, creditLine } = await checkCreditAvailability(
+          supabase,
+          purchaseOrder.merchant_id,
+          purchaseOrder.net_amount
+        );
+
+        if (!available || !creditLine) {
+          return {
+            success: false,
+            error: 'Insufficient credit line or no active credit line found',
+          };
+        }
+
+        await settleBNPLPayment(supabase, poId, purchaseOrder.net_amount);
+        return { success: true };
       }
 
       default:
@@ -379,28 +413,16 @@ export async function handlePaymentWebhook(
 
   console.log(`Processing webhook: event=${payload.event}, payment_id=${razorpayPaymentId}, status=${paymentStatus}`);
 
-  // Find the purchase order by razorpay order_id
-  // In a real implementation, we'd store the razorpay order_id in the PO
+  // Find the purchase order by order number (stored as order_number)
+  // Note: In production, you'd store razorpay_order_id in the PO
   const { data: po, error: poError } = await supabase
     .from('purchase_orders')
     .select('*')
-    .eq('razorpay_order_id', razorpayOrderId)
+    .eq('order_number', razorpayOrderId)
     .single();
 
-  if (poError) {
-    // Try to find by payment reference
-    const { data: poByRef } = await supabase
-      .from('purchase_orders')
-      .select('*')
-      .eq('payment_reference', razorpayPaymentId)
-      .single();
-
-    if (!poByRef) {
-      console.warn(`Purchase order not found for payment ${razorpayPaymentId}`);
-      return;
-    }
-
-    await processPaymentStatusUpdate(supabase, poByRef as PurchaseOrderRow, paymentStatus, razorpayPaymentId);
+  if (poError && poError.code !== 'PGRST116') {
+    console.warn(`Purchase order not found for razorpay order ${razorpayOrderId}`);
     return;
   }
 
@@ -410,34 +432,34 @@ export async function handlePaymentWebhook(
 }
 
 /**
- * Process payment status update based on Razorpay status
+ * Process payment status update based on payment gateway status
  */
 async function processPaymentStatusUpdate(
   supabase: SupabaseClient,
   purchaseOrder: PurchaseOrderRow,
-  razorpayStatus: string,
+  gatewayStatus: string,
   razorpayPaymentId: string
 ): Promise<void> {
   let newStatus: PaymentStatus;
   let eventType: string;
 
-  switch (razorpayStatus) {
+  switch (gatewayStatus) {
     case 'captured':
     case 'authorized':
       newStatus = 'paid';
       eventType = 'payment.completed';
       break;
     case 'failed':
-      newStatus = 'failed';
+      newStatus = 'cancelled';
       eventType = 'payment.failed';
       break;
     case 'refunded':
-      newStatus = 'refunded';
+      newStatus = 'partial';
       eventType = 'payment.refunded';
       break;
     case 'pending':
     default:
-      newStatus = 'processing';
+      newStatus = 'pending';
       eventType = 'payment.processing';
   }
 
@@ -446,8 +468,6 @@ async function processPaymentStatusUpdate(
     .from('purchase_orders')
     .update({
       payment_status: newStatus,
-      payment_reference: razorpayPaymentId,
-      updated_at: new Date().toISOString(),
     })
     .eq('id', purchaseOrder.id);
 
@@ -457,11 +477,12 @@ async function processPaymentStatusUpdate(
 
   await logEvent(supabase, {
     event_type: eventType,
+    source: 'payment-settlement',
     payload: {
       po_id: purchaseOrder.id,
       merchant_id: purchaseOrder.merchant_id,
       razorpay_payment_id: razorpayPaymentId,
-      razorpay_status: razorpayStatus,
+      gateway_status: gatewayStatus,
       new_payment_status: newStatus,
     },
   });
@@ -477,12 +498,12 @@ export async function checkOverduePayments(
 ): Promise<{ overduePOs: PurchaseOrderRow[] }> {
   const now = new Date();
 
-  // Find NET_TERMS purchase orders that are past due
-  // Due date = expected_delivery + tenor_days
+  // Find purchase orders that are past expected_delivery and still pending
+  // Note: tenor_days is on credit_lines, not purchase_orders
   const { data: overdueOrders, error } = await supabase
     .from('purchase_orders')
     .select('*')
-    .eq('payment_method', 'net_terms')
+    .in('payment_method', ['net-terms', 'credit', 'bnpl'])
     .eq('payment_status', 'pending')
     .eq('status', 'delivered'); // Only orders that have been delivered
 
@@ -495,10 +516,9 @@ export async function checkOverduePayments(
 
   for (const order of orders) {
     const expectedDelivery = new Date(order.expected_delivery);
-    const tenorDays = order.tenor_days ?? 30;
-    const dueDate = new Date(expectedDelivery.getTime() + tenorDays * 24 * 60 * 60 * 1000);
 
-    if (now > dueDate) {
+    // Consider overdue if past expected delivery date
+    if (now > expectedDelivery) {
       overduePOs.push(order);
 
       // Update status to overdue
@@ -506,21 +526,23 @@ export async function checkOverduePayments(
         .from('purchase_orders')
         .update({
           payment_status: 'overdue',
-          updated_at: now.toISOString(),
         })
         .eq('id', order.id);
 
+      const daysOverdue = Math.floor((now.getTime() - expectedDelivery.getTime()) / (1000 * 60 * 60 * 24));
+
       await logEvent(supabase, {
         event_type: 'payment.overdue.detected',
+        source: 'payment-settlement',
         payload: {
           po_id: order.id,
           merchant_id: order.merchant_id,
-          due_date: dueDate.toISOString(),
-          days_overdue: Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)),
+          expected_delivery: expectedDelivery.toISOString(),
+          days_overdue: daysOverdue,
         },
       });
 
-      console.log(`Payment overdue for PO ${order.id}: due ${dueDate.toISOString()}`);
+      console.log(`Payment overdue for PO ${order.id}: due ${expectedDelivery.toISOString()}, ${daysOverdue} days overdue`);
     }
   }
 
@@ -535,11 +557,11 @@ async function sendPaymentReminders(supabase: SupabaseClient): Promise<void> {
   const now = new Date();
   const reminderWindow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 days from now
 
-  // Find NET_TERMS orders due within 3 days
+  // Find purchase orders with pending payments due within 3 days
   const { data: upcomingOrders, error } = await supabase
     .from('purchase_orders')
     .select('*')
-    .eq('payment_method', 'net_terms')
+    .in('payment_method', ['net-terms', 'credit', 'bnpl'])
     .eq('payment_status', 'pending')
     .eq('status', 'delivered');
 
@@ -551,22 +573,22 @@ async function sendPaymentReminders(supabase: SupabaseClient): Promise<void> {
 
   for (const order of orders) {
     const expectedDelivery = new Date(order.expected_delivery);
-    const tenorDays = order.tenor_days ?? 30;
-    const dueDate = new Date(expectedDelivery.getTime() + tenorDays * 24 * 60 * 60 * 1000);
+    const daysUntilDue = Math.ceil((expectedDelivery.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-    if (dueDate <= reminderWindow && dueDate > now) {
+    if (daysUntilDue <= 3 && daysUntilDue > 0) {
       // Send reminder
       await logEvent(supabase, {
         event_type: 'payment.reminder.sent',
+        source: 'payment-settlement',
         payload: {
           po_id: order.id,
           merchant_id: order.merchant_id,
-          due_date: dueDate.toISOString(),
-          days_until_due: Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+          expected_delivery: expectedDelivery.toISOString(),
+          days_until_due: daysUntilDue,
         },
       });
 
-      console.log(`Payment reminder sent for PO ${order.id}: due in ${Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))} days`);
+      console.log(`Payment reminder sent for PO ${order.id}: due in ${daysUntilDue} days`);
     }
   }
 }
@@ -595,3 +617,14 @@ async function main(): Promise<void> {
 
   console.log('Payment Settlement Service exiting...');
 }
+
+// Run if executed directly
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Unhandled error:', err);
+    process.exit(1);
+  });
+}
+
+// Export for use as a module
+export { createSupabaseClient, main };

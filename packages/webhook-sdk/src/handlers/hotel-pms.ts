@@ -1,12 +1,22 @@
 import { z } from 'zod';
+import {
+  mapSeverityToDB,
+  mapSignalTypeToDB,
+  type WebhookHandlerContext,
+  type WebhookHandlerResult,
+  type InventorySignal,
+  createHandlerClient,
+  insertInventorySignal,
+  insertEventRecord,
+  handleError,
+} from './common';
 
 /**
  * Hotel PMS Inventory Signal Payload Schema
- * Received when hotel inventory (housekeeping, kitchen, spa, etc.) drops below threshold
  */
 export const HotelPMSInventoryPayloadSchema = z.object({
   event: z.literal('inventory.signal.received'),
-  merchantId: z.string().min(1, 'merchantId is required'), // Hotel ID
+  merchantId: z.string().min(1, 'merchantId is required'),
   department: z.enum(['housekeeping', 'kitchen', 'spa', 'front_desk']),
   itemId: z.string().min(1, 'itemId is required'),
   itemName: z.string().min(1, 'itemName is required'),
@@ -23,29 +33,6 @@ export const HotelPMSInventoryPayloadSchema = z.object({
 export type HotelPMSInventoryPayload = z.infer<typeof HotelPMSInventoryPayloadSchema>;
 
 /**
- * Internal Inventory Signal format that all handlers map to
- */
-export interface InventorySignal {
-  id?: string;
-  merchantId: string;
-  source: 'hotel-pms';
-  sourceMerchantId: string;
-  productId: string;
-  productName: string;
-  department?: string;
-  sku?: string;
-  currentStock: number;
-  threshold: number;
-  unit: string;
-  category?: string;
-  severity: 'low' | 'critical' | 'out_of_stock';
-  signalType: 'threshold_breach' | 'manual_request' | 'forecast_deficit';
-  metadata?: Record<string, unknown>;
-  signalTimestamp: string;
-  receivedAt: string;
-}
-
-/**
  * Maps Hotel PMS payload to internal InventorySignal format
  */
 export function mapHotelPMSToInventorySignal(
@@ -55,51 +42,19 @@ export function mapHotelPMSToInventorySignal(
     merchantId: payload.merchantId,
     source: 'hotel-pms',
     sourceMerchantId: payload.merchantId,
-    productId: payload.itemId,
+    sourceProductId: payload.itemId,
     productName: payload.itemName,
-    department: payload.department,
+    category: payload.category,
     currentStock: payload.currentStock,
     threshold: payload.threshold,
     unit: payload.unit,
-    category: payload.category,
-    severity: payload.severity,
-    signalType: payload.signalType,
+    severity: mapSeverityToDB(payload.severity),
+    signalType: mapSignalTypeToDB(payload.signalType),
     metadata: {
       ...payload.metadata,
       hotelDepartment: payload.department,
     },
-    signalTimestamp: payload.timestamp,
-    receivedAt: new Date().toISOString(),
-  };
-}
-
-/**
- * Creates an event record for the events table
- */
-export interface InventorySignalEvent {
-  type: 'inventory.signal.received';
-  source: 'hotel-pms';
-  payload: HotelPMSInventoryPayload;
-  merchantId: string;
-  productId: string;
-  severity: 'low' | 'critical' | 'out_of_stock';
-  timestamp: string;
-}
-
-/**
- * Maps Hotel PMS payload to event record format
- */
-export function mapHotelPMSToEvent(
-  payload: HotelPMSInventoryPayload
-): InventorySignalEvent {
-  return {
-    type: 'inventory.signal.received',
-    source: 'hotel-pms',
-    payload,
-    merchantId: payload.merchantId,
-    productId: payload.itemId,
-    severity: payload.severity,
-    timestamp: new Date().toISOString(),
+    createdAt: new Date(),
   };
 }
 
@@ -125,88 +80,45 @@ export function validateHotelPMSPayloadSafe(
 }
 
 /**
- * Hotel PMS webhook handler context
- */
-export interface HotelPMSHandlerContext {
-  supabaseUrl: string;
-  supabaseServiceKey: string;
-}
-
-export interface HotelPMSHandlerResult {
-  success: boolean;
-  signalId?: string;
-  eventId?: string;
-  error?: string;
-}
-
-/**
  * Process a Hotel PMS inventory signal webhook
- *
- * @param payload - The validated Hotel PMS payload
- * @param context - Database connection context
- * @returns Result with signal and event IDs
  */
 export async function handleHotelPMSInventorySignal(
   payload: HotelPMSInventoryPayload,
-  context: HotelPMSHandlerContext
-): Promise<HotelPMSHandlerResult> {
+  context: WebhookHandlerContext
+): Promise<WebhookHandlerResult> {
   try {
-    // Import Supabase dynamically to avoid issues if not installed
-    const { createClient } = await import('@supabase/supabase-js');
-    const supabase = createClient(context.supabaseUrl, context.supabaseServiceKey);
+    const supabase = createHandlerClient(context);
 
     // Map to internal format
     const inventorySignal = mapHotelPMSToInventorySignal(payload);
-    const eventRecord = mapHotelPMSToEvent(payload);
 
     // Insert inventory signal
-    const { data: signalData, error: signalError } = await supabase
-      .from('inventory_signals')
-      .insert(inventorySignal)
-      .select('id')
-      .single();
-
-    if (signalError) {
-      console.error('Failed to insert inventory signal:', signalError);
+    const signalResult = await insertInventorySignal(supabase, inventorySignal);
+    if (signalResult.error) {
+      console.error('Failed to insert inventory signal:', signalResult.error);
       return {
         success: false,
-        error: `Database error inserting inventory signal: ${signalError.message}`,
+        error: `Database error inserting inventory signal: ${signalResult.error.message}`,
       };
     }
 
-    // Insert event record
-    const { data: eventData, error: eventError } = await supabase
-      .from('events')
-      .insert({
-        type: eventRecord.type,
-        source: eventRecord.source,
-        payload: eventRecord.payload,
-        merchant_id: eventRecord.merchantId,
-        product_id: eventRecord.productId,
-        severity: eventRecord.severity,
-        timestamp: eventRecord.timestamp,
-        created_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (eventError) {
-      console.error('Failed to insert event record:', eventError);
-      // Signal was inserted successfully, so we don't return error
-      // but we log the event insertion failure
+    // Insert event record (events table only has: id, type, source, payload, created_at)
+    const eventResult = await insertEventRecord(
+      supabase,
+      payload.event,
+      'hotel-pms',
+      { ...payload, processedAt: new Date().toISOString() }
+    );
+    if (eventResult.error) {
+      console.error('Failed to insert event record:', eventResult.error);
     }
 
     return {
       success: true,
-      signalId: signalData.id,
-      eventId: eventData?.id,
+      signalId: signalResult.data?.id,
+      eventId: eventResult.data?.id,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Hotel PMS handler error:', message);
-    return {
-      success: false,
-      error: message,
-    };
+    return handleError(error, 'hotel-pms');
   }
 }

@@ -45,7 +45,7 @@ const mockSignals: InventorySignal[] = [
     unit: 'kg',
     category: 'Grains',
     severity: 'critical',
-    signalType: 'threshold_breach',
+    signalType: 'low_stock',
     metadata: { urgency: 'high', reorderQty: 100 },
     createdAt: new Date(Date.now() - 30 * 60 * 1000), // 30 mins ago
   },
@@ -62,7 +62,7 @@ const mockSignals: InventorySignal[] = [
     unit: 'liters',
     category: 'Oils',
     severity: 'low',
-    signalType: 'threshold_breach',
+    signalType: 'low_stock',
     metadata: { urgency: 'medium', reorderQty: 50 },
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
   },
@@ -78,8 +78,8 @@ const mockSignals: InventorySignal[] = [
     threshold: 20,
     unit: 'kg',
     category: 'Meat',
-    severity: 'out_of_stock',
-    signalType: 'forecast_deficit',
+    severity: 'critical',
+    signalType: 'out_of_stock',
     metadata: { urgency: 'high', reorderQty: 40 },
     createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000), // 4 hours ago
   },
@@ -96,7 +96,7 @@ const mockSignals: InventorySignal[] = [
     unit: 'kg',
     category: 'Dairy',
     severity: 'low',
-    signalType: 'threshold_breach',
+    signalType: 'low_stock',
     metadata: { urgency: 'low', reorderQty: 25 },
     createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000), // 6 hours ago
   },
@@ -113,7 +113,7 @@ const mockSignals: InventorySignal[] = [
     unit: 'bottles',
     category: 'Sauces',
     severity: 'critical',
-    signalType: 'threshold_breach',
+    signalType: 'low_stock',
     metadata: { urgency: 'high', reorderQty: 30 },
     createdAt: new Date(Date.now() - 8 * 60 * 60 * 1000), // 8 hours ago
   },
@@ -129,8 +129,8 @@ const mockSignals: InventorySignal[] = [
     threshold: 25,
     unit: 'kg',
     category: 'Vegetables',
-    severity: 'out_of_stock',
-    signalType: 'threshold_breach',
+    severity: 'critical',
+    signalType: 'out_of_stock',
     metadata: { urgency: 'high', reorderQty: 50 },
     createdAt: new Date(Date.now() - 12 * 60 * 60 * 1000), // 12 hours ago
   },
@@ -207,7 +207,7 @@ export default function SignalsPage() {
       setStats({
         total: filtered.length,
         critical: filtered.filter(s => s.severity === 'critical').length,
-        outOfStock: filtered.filter(s => s.severity === 'out_of_stock').length,
+        outOfStock: filtered.filter(s => s.signalType === 'out_of_stock').length,
         processed: 0,
       });
 
@@ -476,7 +476,7 @@ export default function SignalsPage() {
           setIsCreatePOModalOpen(false);
           setSignalForPO(null);
         }}
-        source="reorder_signal"
+        source="reorder"
         initialItems={signalForPO ? [{
           name: signalForPO.productName,
           sku: signalForPO.sku,
