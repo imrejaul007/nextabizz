@@ -307,7 +307,11 @@ async function createMerchantSession(
   };
 
   // Sign with HMAC-SHA256 using a secret from env
-  const secret = process.env.JWT_SECRET || 'development-secret-change-in-production';
+  // SECURITY FIX: Removed hardcoded fallback — fail fast if JWT_SECRET is not set.
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('[ENV] JWT_SECRET environment variable is required. Cannot sign tokens without it.');
+  }
   const signature = crypto.createHmac('sha256', secret)
     .update(JSON.stringify(accessTokenPayload))
     .digest('hex');
