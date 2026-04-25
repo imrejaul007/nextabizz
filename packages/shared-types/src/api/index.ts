@@ -1,3 +1,7 @@
 // API request/response types
-export * from './api-requests';
-export * from './api-responses';
+
+// Request types
+export * from './api-requests.js';
+
+// Response types
+export * from './api-responses.js';

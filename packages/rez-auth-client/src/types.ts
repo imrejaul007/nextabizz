@@ -1,28 +1,39 @@
-export interface RezMerchant {
+export interface RezAuthUser {
   id: string;
-  name: string;
   email: string;
-  phone?: string;
-  address?: string;
-  createdAt: string;
-  updatedAt: string;
+  name?: string;
+  role: 'merchant' | 'supplier' | 'admin';
+  merchantId?: string;   // if role=merchant
+  supplierId?: string;   // if role=supplier
+  businessName?: string;
 }
 
-export interface RezOrder {
-  id: string;
-  orderNumber: string;
-  merchantId: string;
-  status: string;
-  totalAmount: number;
-  items: RezOrderItem[];
-  createdAt: string;
-  updatedAt: string;
+export interface RezAuthTokenPayload {
+  sub: string;
+  email: string;
+  name?: string;
+  role: string;
+  merchantId?: string;
+  supplierId?: string;
+  businessName?: string;
+  iat: number;
+  exp: number;
 }
 
-export interface RezOrderItem {
-  productId: string;
-  productName: string;
-  quantity: number;
-  unitPrice: number;
-  totalPrice: number;
+export interface SSOCallbackResult {
+  success: boolean;
+  user?: RezAuthUser;
+  token?: string;
+  error?: string;
+}
+
+export interface TokenExchangeResponse {
+  access_token: string;
+  user: RezAuthUser;
+}
+
+export interface ValidateTokenResponse {
+  valid: boolean;
+  user?: RezAuthUser;
+  error?: string;
 }

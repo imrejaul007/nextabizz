@@ -15,7 +15,8 @@
     "react-dom": "^19.0.0",
     "@nextabizz/shared-types": "workspace:*",
     "@nextabizz/webhook-sdk": "workspace:*",
-    "@nextabizz/rez-auth-client": "workspace:*"
+    "@nextabizz/rez-auth-client": "workspace:*",
+    "@supabase/supabase-js": "^2.47.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
