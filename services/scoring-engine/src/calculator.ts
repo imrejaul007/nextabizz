@@ -1,6 +1,34 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 
 /**
+ * Scoring configuration constants
+ */
+const SCORING_CONFIG = {
+  // Lead time constants
+  DEFAULT_LEAD_TIME_DAYS: 14,
+  LEAD_TIME_NORMALIZATION_RANGE: 20,
+  LEAD_TIME_BASELINE: 14,
+
+  // Score weights (must sum to 1.0)
+  WEIGHTS: {
+    onTimeDelivery: 0.25,
+    quality: 0.25,
+    priceConsistency: 0.2,
+    responseRate: 0.15,
+    leadTime: 0.15,
+  },
+
+  // Score ranges
+  SCORE_SCALE_MAX: 5,
+  MAX_CREDIT_BOOST: 0.3,
+
+  // Decimal precision
+  RATE_DECIMAL_PLACES: 4,
+  SCORE_DECIMAL_PLACES: 2,
+  LEAD_TIME_DECIMAL_PLACES: 2,
+} as const;
+
+/**
  * Input data for calculating supplier scores
  */
 export interface ScoreInputs {
@@ -178,7 +206,7 @@ async function collectScoreInputs(
     }
   }
 
-  const avgLeadTime = leadTimeCount > 0 ? totalLeadTimeDays / leadTimeCount : 14; // Default to 14 days
+  const avgLeadTime = leadTimeCount > 0 ? totalLeadTimeDays / leadTimeCount : SCORING_CONFIG.DEFAULT_LEAD_TIME_DAYS;
 
   // Fetch RFQ responses for this supplier
   const { data: rfqResponses, error: rfqResponseError } = await supabase
@@ -231,36 +259,41 @@ async function collectScoreInputs(
  * Calculate supplier score from inputs
  */
 function calculateScore(inputs: ScoreInputs): Omit<SupplierScore, 'id' | 'supplier_id' | 'period' | 'period_start' | 'period_end' | 'calculated_at'> {
+  const { WEIGHTS, SCORE_SCALE_MAX, MAX_CREDIT_BOOST, RATE_DECIMAL_PLACES, LEAD_TIME_DECIMAL_PLACES, DEFAULT_LEAD_TIME_DAYS, LEAD_TIME_NORMALIZATION_RANGE } = SCORING_CONFIG;
+
   // Calculate component rates
   const onTimeRate = inputs.totalOrders > 0 ? inputs.onTimeDeliveries / inputs.totalOrders : 0;
   const qualityRate = inputs.totalOrders > 0 ? 1 - (inputs.rejectedOrders / inputs.totalOrders) : 1;
   const priceConsistency = inputs.totalOrders > 0 ? 1 - (inputs.priceChanges / inputs.totalOrders) : 1;
   const responseRate = inputs.totalRFQs > 0 ? inputs.rfqResponses / inputs.totalRFQs : 0;
 
-  // Lead time score: normalized to 0-1, 14 days = 0.5 baseline
-  // Better if <14 days, worse if >14 days
-  const avgLeadTimeScore = clamp(1 - (inputs.avgLeadTime - 14) / 20, 0, 1);
+  // Lead time score: normalized to 0-1, baseline days = 0.5 baseline
+  // Better if <baseline days, worse if >baseline days
+  const avgLeadTimeScore = clamp(1 - (inputs.avgLeadTime - DEFAULT_LEAD_TIME_DAYS) / LEAD_TIME_NORMALIZATION_RANGE, 0, 1);
 
-  // Weighted overall score (0-5 scale)
+  // Weighted overall score (0-SCORE_SCALE_MAX scale)
   const weightedScore =
-    onTimeRate * 0.25 +
-    qualityRate * 0.25 +
-    priceConsistency * 0.2 +
-    responseRate * 0.15 +
-    avgLeadTimeScore * 0.15;
+    onTimeRate * WEIGHTS.onTimeDelivery +
+    qualityRate * WEIGHTS.quality +
+    priceConsistency * WEIGHTS.priceConsistency +
+    responseRate * WEIGHTS.responseRate +
+    avgLeadTimeScore * WEIGHTS.leadTime;
 
-  const overallScore = Math.round(weightedScore * 5 * 100) / 100; // Scale to 0-5, round to 2 decimals
+  const overallScore = Math.round(weightedScore * SCORE_SCALE_MAX * 100) / 100; // Scale to 0-5, round to 2 decimals
 
-  // Credit boost: 0-0.3 based on overall score
-  const creditBoost = Math.round(clamp(overallScore / 5 * 0.3, 0, 0.3) * 100) / 100;
+  // Credit boost: 0-MAX_CREDIT_BOOST based on overall score
+  const creditBoost = Math.round(clamp(overallScore / SCORE_SCALE_MAX * MAX_CREDIT_BOOST, 0, MAX_CREDIT_BOOST) * 100) / 100;
+
+  const rateMultiplier = Math.pow(10, RATE_DECIMAL_PLACES);
+  const leadTimeMultiplier = Math.pow(10, LEAD_TIME_DECIMAL_PLACES);
 
   return {
     overall_score: overallScore,
-    on_time_delivery_rate: Math.round(onTimeRate * 10000) / 10000,
-    quality_rejection_rate: Math.round(qualityRate * 10000) / 10000,
-    price_consistency: Math.round(priceConsistency * 10000) / 10000,
-    response_rate: Math.round(responseRate * 10000) / 10000,
-    avg_lead_time_days: Math.round(inputs.avgLeadTime * 100) / 100,
+    on_time_delivery_rate: Math.round(onTimeRate * rateMultiplier) / rateMultiplier,
+    quality_rejection_rate: Math.round(qualityRate * rateMultiplier) / rateMultiplier,
+    price_consistency: Math.round(priceConsistency * rateMultiplier) / rateMultiplier,
+    response_rate: Math.round(responseRate * rateMultiplier) / rateMultiplier,
+    avg_lead_time_days: Math.round(inputs.avgLeadTime * leadTimeMultiplier) / leadTimeMultiplier,
     credit_boost: creditBoost,
   };
 }
