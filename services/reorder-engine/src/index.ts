@@ -20,6 +20,11 @@ const ReorderSignalStatusSchema = z.enum(['pending', 'matched', 'po_created', 'd
 // DB: urgency CHECK IN ('low', 'medium', 'high', 'urgent')
 const UrgencySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 
+// REZ Merchant webhook configuration
+const REZ_MERCHANT_WEBHOOK_URL = process.env.REZ_MERCHANT_WEBHOOK_URL || 'https://rez-merchant-service.onrender.com/internal/nextabizz/reorder-signal';
+const REZ_MERCHANT_WEBHOOK_SECRET = process.env.REZ_MERCHANT_WEBHOOK_SECRET;
+const WEBHOOK_TIMEOUT_MS = 10000;
+
 type InventorySignalSeverity = z.infer<typeof InventorySignalSeveritySchema>;
 type InventorySignalType = z.infer<typeof InventorySignalTypeSchema>;
 type ReorderSignalStatus = z.infer<typeof ReorderSignalStatusSchema>;
@@ -220,6 +225,94 @@ export async function logEvent(
 }
 
 /**
+ * Send reorder signal notification to REZ Merchant
+ */
+async function notifyRezMerchant(params: {
+  merchantId: string;
+  signalId: string;
+  reorderSignalId: string;
+  productName: string;
+  currentStock: number;
+  threshold: number;
+  suggestedQty: number;
+  urgency: Urgency;
+  severity: InventorySignalSeverity;
+  unit: string;
+  category?: string;
+  matchedSuppliers?: number;
+  matchConfidence?: number;
+}): Promise<boolean> {
+  if (!REZ_MERCHANT_WEBHOOK_SECRET) {
+    console.warn('[REZ-Merchant] WEBHOOK_SECRET not configured, skipping notification');
+    return false;
+  }
+
+  try {
+    const timestamp = new Date().toISOString();
+    const payload = {
+      event: params.matchedSuppliers && params.matchedSuppliers > 0
+        ? 'reorder.signal.matched'
+        : 'reorder.signal.created',
+      merchantId: params.merchantId,
+      signalId: params.reorderSignalId,
+      productName: params.productName,
+      currentStock: params.currentStock,
+      threshold: params.threshold,
+      suggestedQty: params.suggestedQty,
+      urgency: params.urgency,
+      severity: params.severity,
+      unit: params.unit,
+      category: params.category,
+      timestamp,
+      matchedSuppliers: params.matchedSuppliers,
+      matchConfidence: params.matchConfidence,
+    };
+
+    const payloadString = JSON.stringify(payload);
+    const crypto = await import('crypto');
+    const signature = crypto
+      .createHmac('sha256', REZ_MERCHANT_WEBHOOK_SECRET)
+      .update(`${timestamp}.${payloadString}`)
+      .digest('hex');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
+
+    const response = await fetch(REZ_MERCHANT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Token': REZ_MERCHANT_WEBHOOK_SECRET,
+        'X-Webhook-Signature': signature,
+        'X-Webhook-Source': 'nextabizz',
+        'X-Webhook-Event': payload.event,
+      },
+      body: payloadString,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => 'Unknown error');
+      console.error(`[REZ-Merchant] Webhook failed with status ${response.status}:`, errorBody);
+      return false;
+    }
+
+    const result = await response.json().catch(() => ({}));
+    console.log(`[REZ-Merchant] Notification sent successfully:`, {
+      merchantId: params.merchantId,
+      notificationId: result.notificationId,
+    });
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[REZ-Merchant] Error sending webhook:`, errorMessage);
+    return false;
+  }
+}
+
+/**
  * Process all pending inventory signals and generate reorder signals
  */
 export async function processPendingSignals(
@@ -295,6 +388,21 @@ export async function processPendingSignals(
       created++;
       console.log(`Created reorder signal ${reorderSignalId} for product ${inventorySignal.product_name} (qty: ${suggestedQty}, urgency: ${urgency})`);
 
+      // Notify REZ Merchant about the reorder signal
+      await notifyRezMerchant({
+        merchantId: inventorySignal.merchant_id,
+        signalId: inventorySignal.id,
+        reorderSignalId: reorderSignalId!,
+        productName: inventorySignal.product_name,
+        currentStock: inventorySignal.current_stock,
+        threshold: inventorySignal.threshold,
+        suggestedQty,
+        urgency,
+        severity: inventorySignal.severity,
+        unit: inventorySignal.unit,
+        category: inventorySignal.category,
+      });
+
       // Log the event
       await logEvent(supabase, {
         event_type: 'reorder.signal.created',
@@ -344,6 +452,23 @@ export async function processPendingSignals(
               matched_supplier_count: matchedProducts.length,
               match_confidence: avgConfidence,
             },
+          });
+
+          // Notify REZ Merchant about the matched signal with supplier info
+          await notifyRezMerchant({
+            merchantId: inventorySignal.merchant_id,
+            signalId: inventorySignal.id,
+            reorderSignalId: reorderSignalId!,
+            productName: inventorySignal.product_name,
+            currentStock: inventorySignal.current_stock,
+            threshold: inventorySignal.threshold,
+            suggestedQty,
+            urgency,
+            severity: inventorySignal.severity,
+            unit: inventorySignal.unit,
+            category: inventorySignal.category,
+            matchedSuppliers: matchedProducts.length,
+            matchConfidence: avgConfidence,
           });
         }
       }

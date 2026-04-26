@@ -57,3 +57,12 @@ export {
 
 // Types exports
 export type { WebhookPayload, WebhookHandler } from './types';
+
+// Sender exports (for sending webhooks to external services)
+export {
+  sendReorderSignalToRezMerchant,
+  buildReorderSignalPayload,
+  createWebhookSignature,
+  type RezMerchantWebhookPayload,
+  type WebhookSendResult,
+} from './sender';
