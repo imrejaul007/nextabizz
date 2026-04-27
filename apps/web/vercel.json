@@ -3,7 +3,6 @@
   "buildCommand": "pnpm build",
   "devCommand": "pnpm dev",
   "installCommand": "pnpm install",
-  "regions": ["blr1"],
   "regions": ["sin1"],
   "env": {
     "NODE_ENV": "production"
