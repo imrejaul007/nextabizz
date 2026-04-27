@@ -1,7 +1,7 @@
 // ── NextaBiZ Chat Service ──────────────────────────────────────────────────────────────
 // Business tools platform chat actions
 
-import { logger } from '@rez/chat-integration/socket/logger';
+import { logger } from './logger';
 
 export interface NextaBizContext {
   userId: string;

@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "dom", "dom.iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "composite": true,
@@ -15,8 +15,10 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "jsx": "preserve",
     "noEmit": false,
     "types": []
   },
-  "exclude": ["node_modules", "dist", ".next", ".turbo"]
+  "include": [],
+  "exclude": ["node_modules", "dist", ".next", ".turbo", "apps", "packages", "services"]
 }
