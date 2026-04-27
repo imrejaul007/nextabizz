@@ -19,5 +19,6 @@
     "noEmit": false,
     "types": []
   },
-  "exclude": ["node_modules", "dist", ".next", ".turbo"]
+  "include": [],
+  "exclude": ["node_modules", "dist", ".next", ".turbo", "apps", "packages", "services"]
 }
