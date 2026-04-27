@@ -11,6 +11,7 @@
     "moduleResolution": "bundler",
     "composite": true,
     "incremental": true,
+    "types": [],
     "plugins": [
       {
         "name": "next"
