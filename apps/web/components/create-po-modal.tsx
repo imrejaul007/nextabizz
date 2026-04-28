@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react';
 import type { Supplier, SupplierProduct, POItemInput, PaymentMethod, CreatePurchaseOrderInput } from '@nextabizz/shared-types';
 import { fetchSuppliers, fetchCatalogProducts, createOrder } from '@/lib/api';
 import { getSession } from '@/lib/supabase';
+import { track } from '@/lib/intentCaptureService';
+
+const APP_TYPE = 'nextabizz-web';
 
 interface CreatePOModalProps {
   open: boolean;
@@ -75,8 +78,29 @@ export default function CreatePOModal({
       if (initialItems.length > 0) {
         setLineItems(initialItems.map((item, idx) => ({ ...item, id: `item-${idx}` })));
       }
+
+      // Track checkout_start when the PO creation modal is opened
+      const session = getSession();
+      if (session?.merchantId) {
+        const cartTotal = initialItems.reduce(
+          (sum, item) => sum + (item.unitPrice ?? 0) * item.qty,
+          0
+        );
+        track({
+          userId: session.merchantId,
+          event: 'checkout_start',
+          appType: APP_TYPE,
+          intentKey: `checkout-${session.merchantId}`,
+          properties: {
+            source,
+            rfqId,
+            itemCount: initialItems.length,
+            totalValue: cartTotal,
+          },
+        });
+      }
     }
-  }, [open, initialItems]);
+  }, [open, initialItems, source, rfqId]);
 
   useEffect(() => {
     if (selectedSupplier) {
@@ -203,6 +227,33 @@ export default function CreatePOModal({
       };
 
       const order = await createOrder(session.merchantId, orderData);
+
+      // Track order_placed (highest-confidence intent signal)
+      const orderTotal = lineItems.reduce(
+        (sum, item) => sum + (item.total ?? item.qty * item.unitPrice),
+        0
+      );
+      track({
+        userId: session.merchantId,
+        event: 'order_placed',
+        appType: APP_TYPE,
+        intentKey: order.id,
+        properties: {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          supplierId: selectedSupplier!.id,
+          source,
+          rfqId,
+          paymentMethod,
+          totalValue: orderTotal,
+          itemCount: lineItems.length,
+          items: lineItems.map(item => ({
+            sku: item.sku,
+            qty: item.qty,
+            unitPrice: item.unitPrice,
+          })),
+        },
+      });
 
       if (onSuccess) {
         onSuccess(order.id);

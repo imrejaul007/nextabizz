@@ -5,6 +5,9 @@ import type { InventorySignal, SignalSeverity } from '@nextabizz/shared-types';
 import { getSession } from '@/lib/supabase';
 import SignalCard, { SignalDetailModal } from '@/components/signal-card';
 import CreatePOModal from '@/components/create-po-modal';
+import { track } from '@/lib/intentCaptureService';
+
+const APP_TYPE = 'nextabizz-web';
 
 type SourceFilter = 'all' | 'restopapa' | 'rez-merchant' | 'hotel-pms';
 type SeverityFilter = 'all' | 'critical' | 'low' | 'out_of_stock';
@@ -234,11 +237,52 @@ export default function SignalsPage() {
   }, [sourceFilter, severityFilter, startDate, endDate]);
 
   const handleSignalClick = (signal: InventorySignal) => {
+    // Track signal view intent
+    const session = getSession();
+    if (session?.merchantId) {
+      track({
+        userId: session.merchantId,
+        event: 'product_view',
+        appType: APP_TYPE,
+        intentKey: signal.sourceProductId ?? signal.id,
+        properties: {
+          signalId: signal.id,
+          source: signal.source,
+          severity: signal.severity,
+          productName: signal.productName,
+          sku: signal.sku,
+          currentStock: signal.currentStock,
+          threshold: signal.threshold,
+          unit: signal.unit,
+        },
+      });
+    }
+
     setSelectedSignal(signal);
     setIsDetailModalOpen(true);
   };
 
   const handleCreatePO = (signal: InventorySignal) => {
+    // Track checkout_start from signal (reorder intent)
+    const session = getSession();
+    if (session?.merchantId) {
+      track({
+        userId: session.merchantId,
+        event: 'checkout_start',
+        appType: APP_TYPE,
+        intentKey: signal.sourceProductId ?? signal.id,
+        properties: {
+          signalId: signal.id,
+          source: signal.source,
+          severity: signal.severity,
+          productName: signal.productName,
+          sku: signal.sku,
+          reorderQty: signal.metadata?.reorderQty ?? signal.threshold,
+          unit: signal.unit,
+        },
+      });
+    }
+
     setSignalForPO(signal);
     setIsCreatePOModalOpen(true);
   };

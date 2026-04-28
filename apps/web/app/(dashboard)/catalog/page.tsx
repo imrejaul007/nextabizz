@@ -1,8 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { SupplierProduct } from '@nextabizz/shared-types';
 import CreatePOModal from '@/components/create-po-modal';
+import { track } from '@/lib/intentCaptureService';
+import { getSession } from '@/lib/supabase';
+
+const APP_TYPE = 'nextabizz-web';
 
 type SortOption = 'price_asc' | 'price_desc' | 'moq' | 'delivery_days';
 
@@ -270,7 +274,52 @@ export default function CatalogPage() {
     setPage(1);
   }, [searchQuery, selectedCategory, sortBy]);
 
+  // Track product search intent (debounced to avoid duplicate events on rapid typing)
+  const lastSearchRef = useRef('');
+  useEffect(() => {
+    if (!searchQuery || searchQuery === lastSearchRef.current) return;
+    lastSearchRef.current = searchQuery;
+
+    const session = getSession();
+    if (!session?.merchantId) return;
+
+    const timer = setTimeout(() => {
+      track({
+        userId: session.merchantId,
+        event: 'product_search',
+        appType: APP_TYPE,
+        intentKey: searchQuery.trim().toLowerCase(),
+        properties: {
+          query: searchQuery,
+          category: selectedCategory ?? 'all',
+          sortBy,
+        },
+      });
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedCategory, sortBy]);
+
   const handleAddToCart = (product: CatalogProduct) => {
+    // Track product view intent before adding to cart
+    const session = getSession();
+    if (session?.merchantId) {
+      track({
+        userId: session.merchantId,
+        event: 'product_view',
+        appType: APP_TYPE,
+        intentKey: product.id,
+        properties: {
+          productId: product.id,
+          sku: product.sku,
+          supplierId: product.supplierId,
+          price: product.unitPrice,
+          unit: product.unit,
+          moq: product.moq,
+        },
+      });
+    }
+
     const existing = cartItems.find(item => item.product.id === product.id);
     if (existing) {
       setCartItems(items =>
@@ -290,6 +339,31 @@ export default function CatalogPage() {
   };
 
   const handleCreatePO = () => {
+    // Track checkout_start when buyer initiates PO creation
+    const session = getSession();
+    if (session?.merchantId) {
+      const totalValue = cartItems.reduce(
+        (sum, item) => sum + item.product.unitPrice * item.qty,
+        0
+      );
+      track({
+        userId: session.merchantId,
+        event: 'checkout_start',
+        appType: APP_TYPE,
+        intentKey: `cart-${session.merchantId}`,
+        properties: {
+          itemCount: cartItems.length,
+          totalValue,
+          items: cartItems.map(item => ({
+            productId: item.product.id,
+            sku: item.product.sku,
+            qty: item.qty,
+            unitPrice: item.product.unitPrice,
+          })),
+          source: 'catalog-cart',
+        },
+      });
+    }
     setIsCreatePOModalOpen(true);
   };
 

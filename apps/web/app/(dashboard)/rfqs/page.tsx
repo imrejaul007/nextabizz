@@ -2,6 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { RFQ, RFQResponse, RFQStatus, CreateRFQInput } from '@nextabizz/shared-types';
+import { track } from '@/lib/intentCaptureService';
+import { getSession } from '@/lib/supabase';
+
+const APP_TYPE = 'nextabizz-web';
 
 type ViewTab = 'my-rfqs' | 'browse-open';
 
@@ -220,6 +224,27 @@ export default function RFQsPage() {
       };
 
       setMyRFQs(prev => [newRFQ, ...prev]);
+
+      // Track inquiry_sent intent when RFQ is successfully created
+      const session = getSession();
+      if (session?.merchantId) {
+        track({
+          userId: session.merchantId,
+          event: 'inquiry_sent',
+          appType: APP_TYPE,
+          intentKey: newRFQ.id,
+          properties: {
+            rfqId: newRFQ.id,
+            rfqNumber: newRFQ.rfqNumber,
+            title: createForm.title,
+            category: createForm.category,
+            quantity: createForm.quantity,
+            unit: createForm.unit,
+            targetPrice: createForm.targetPrice,
+          },
+        });
+      }
+
       setIsCreateModalOpen(false);
       setCreateForm({
         merchantId: 'merchant-1',
