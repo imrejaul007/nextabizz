@@ -25,6 +25,7 @@ const EVENT_TO_INTENT_MAP: Record<
   inquiry_sent: { eventType: 'wishlist', category: 'RETAIL', confidence: 0.3 },
   checkout_start: { eventType: 'checkout_start', category: 'RETAIL', confidence: 0.6 },
   order_placed: { eventType: 'fulfilled', category: 'RETAIL', confidence: 1.0 },
+  inventory_signal_received: { eventType: 'view', category: 'RETAIL', confidence: 0.25 },
 };
 
 /** Core capture function -- called by track(). */

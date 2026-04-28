@@ -5,6 +5,7 @@ import {
   handleRestoPapaInventorySignal,
   type WebhookHandlerContext,
 } from '@nextabizz/webhook-sdk';
+import { track as intentTrack } from '@/lib/intentCaptureService';
 
 /**
  * RestoPapa Webhook Handler
@@ -187,6 +188,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           processingTimeMs: processingTime,
         }
       );
+
+      // RTMN Commerce Memory: Capture inventory signal as buyer intent (non-blocking)
+      intentTrack({
+        userId: validatedPayload.merchantId,
+        event: 'inventory_signal_received',
+        appType: 'nextabizz-web',
+        intentKey: `product_${validatedPayload.productId}`,
+        properties: {
+          merchantId: validatedPayload.merchantId,
+          productId: validatedPayload.productId,
+          productName: validatedPayload.productName,
+          currentStock: validatedPayload.currentStock,
+          threshold: validatedPayload.threshold,
+          severity: validatedPayload.severity,
+          signalType: validatedPayload.signalType,
+          category: validatedPayload.category,
+          unit: validatedPayload.unit,
+          signalId: result.signalId,
+        },
+      });
 
       return NextResponse.json(
         {
