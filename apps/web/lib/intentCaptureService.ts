@@ -14,7 +14,8 @@
  */
 
 const INTENT_CAPTURE_URL =
-  process.env.NEXT_PUBLIC_INTENT_CAPTURE_URL || '';
+  process.env.NEXT_PUBLIC_INTENT_CAPTURE_URL || 'https://rez-intent-graph.onrender.com';
+const INTERNAL_SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN || '';
 
 const EVENT_TO_INTENT_MAP: Record<
   string,
@@ -42,7 +43,10 @@ export async function captureIntent(params: {
   try {
     await fetch(`${INTENT_CAPTURE_URL}/api/intent/capture`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-token': INTERNAL_SERVICE_TOKEN,
+      },
       body: JSON.stringify({
         userId: params.userId,
         appType: params.appType,
