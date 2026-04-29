@@ -1,46 +1,41 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { buildAuthorizeUrl } from '@/lib/rezOAuth';
 import { setSession, MerchantSession } from '@/lib/supabase';
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleReZLogin = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // In production, this would call POST /api/auth/sso
-      // For demo, we'll simulate the SSO flow
-
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Mock successful auth response
-      const mockSession: MerchantSession = {
-        id: 'user-1',
-        merchantId: 'merchant-1',
-        businessName: 'Sample Restaurant',
-        email: 'merchant@sample.com',
-        accessToken: 'mock-access-token-' + Date.now(),
-        refreshToken: 'mock-refresh-token-' + Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+  // Handle OAuth errors passed back from the callback
+  useEffect(() => {
+    const oauthError = searchParams.get('oauth_error');
+    if (oauthError) {
+      const errorMessages: Record<string, string> = {
+        access_denied: 'Sign-in was cancelled. Please try again.',
+        invalid_request: 'Invalid sign-in request. Please contact support.',
+        token_exchange_failed: 'Failed to complete sign-in. Please try again.',
+        callback_error: 'An error occurred during sign-in. Please try again.',
+        sso_failed: 'Failed to link your REZ account. Please try again.',
       };
-
-      // Store session
-      setSession(mockSession);
-
-      // Redirect to signals page
-      router.push('/signals');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed. Please try again.');
-    } finally {
-      setIsLoading(false);
+      setError(errorMessages[oauthError] || 'Sign-in failed. Please try again.');
+      // Clean up the URL
+      router.replace('/(auth)/login');
     }
+  }, [searchParams, router]);
+
+  const handleReZLogin = () => {
+    // Generate state for CSRF protection
+    const state = Buffer.from(
+      JSON.stringify({ redirectTo: '/signals' }),
+    ).toString('base64');
+
+    // Redirect to REZ Auth Service OAuth2 authorization endpoint
+    window.location.href = buildAuthorizeUrl(state);
   };
 
   return (

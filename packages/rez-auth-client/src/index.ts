@@ -142,7 +142,7 @@ export async function validateSSOToken(token: string): Promise<RezAuthUser> {
     : token;
 
   try {
-    const response = await fetch(`${REZ_AUTH_SERVICE_URL}/auth/validate`, {
+    const response = await fetch(`${REZ_AUTH_SERVICE_URL}/oauth/userinfo`, {
       method: 'GET',
       headers: getInternalHeaders(cleanToken),
     });
@@ -204,7 +204,7 @@ export async function exchangeCodeForToken(code: string): Promise<TokenExchangeR
   }
 
   try {
-    const response = await fetch(`${REZ_AUTH_SERVICE_URL}/auth/token`, {
+    const response = await fetch(`${REZ_AUTH_SERVICE_URL}/oauth/token`, {
       method: 'POST',
       headers: getInternalHeaders(),
       body: JSON.stringify({ code }),
