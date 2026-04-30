@@ -127,25 +127,19 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Demo Login */}
-            <button
-              onClick={() => {
-                const demoSession: MerchantSession = {
-                  id: 'demo-user',
-                  merchantId: 'demo-merchant',
-                  businessName: 'Demo Restaurant',
-                  email: 'demo@example.com',
-                  accessToken: 'demo-token',
-                  refreshToken: 'demo-refresh',
-                  expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-                };
-                setSession(demoSession);
-                router.push('/signals');
-              }}
-              className="w-full px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
-            >
-              Try Demo Account
-            </button>
+            {/* Demo Login - SECURITY FIX: Removed hardcoded credentials
+                 Demo login should use OAuth flow or call /api/auth/demo endpoint */}
+            {process.env.NEXT_PUBLIC_ENABLE_DEMO_LOGIN === 'true' && (
+              <button
+                onClick={() => {
+                  // Demo login via OAuth flow - redirects to REZ auth service
+                  window.location.href = `${process.env.NEXT_PUBLIC_REZ_AUTH_URL}/oauth/authorize?client_id=nextabizz&redirect_uri=${encodeURIComponent(window.location.origin + '/api/auth/callback')}&response_type=code&scope=profile merchant`;
+                }}
+                className="w-full px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Try Demo Account
+              </button>
+            )}
 
             {/* Help Text */}
             <p className="mt-6 text-center text-xs text-gray-400">
