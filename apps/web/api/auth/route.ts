@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
+import logger from '@/lib/logger';
 
 /**
  * Authentication API Routes
@@ -514,6 +515,50 @@ export async function GET(request: NextRequest): Promise<NextResponse<SSOSuccess
         if (payload.type !== 'merchant_access' || !payload.merchant_id) {
           return NextResponse.json(
             { success: false, error: 'Invalid token format', code: 'INVALID_TOKEN' },
+            { status: 401 }
+          );
+        }
+
+        // SECURITY FIX (NEXTABIZZ-JWT-001): Verify HMAC signature before accepting token
+        // Previously, tokens were accepted without signature verification, allowing forgery attacks
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+          logger.error('[AUTH] JWT_SECRET not configured - rejecting request');
+          return NextResponse.json(
+            { success: false, error: 'Server configuration error', code: 'CONFIG_ERROR' },
+            { status: 500 }
+          );
+        }
+
+        // Extract signature from token
+        const tokenSig = payload.sig;
+        if (!tokenSig) {
+          return NextResponse.json(
+            { success: false, error: 'Token missing signature', code: 'INVALID_TOKEN' },
+            { status: 401 }
+          );
+        }
+
+        // Recreate signature from payload and verify
+        const { sig: _sig, ...payloadWithoutSig } = payload;
+        const expectedSig = crypto.createHmac('sha256', secret)
+          .update(JSON.stringify(payloadWithoutSig))
+          .digest('hex');
+
+        // Timing-safe comparison to prevent timing attacks
+        if (!crypto.timingSafeEqual(Buffer.from(tokenSig), Buffer.from(expectedSig))) {
+          logger.warn('[AUTH] Invalid token signature', { merchantId: payload.merchant_id });
+          return NextResponse.json(
+            { success: false, error: 'Invalid token signature', code: 'INVALID_TOKEN' },
+            { status: 401 }
+          );
+        }
+
+        // Check token expiration
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.exp && payload.exp < now) {
+          return NextResponse.json(
+            { success: false, error: 'Token expired', code: 'TOKEN_EXPIRED' },
             { status: 401 }
           );
         }
