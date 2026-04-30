@@ -299,7 +299,7 @@ async function notifyRezMerchant(params: {
       return false;
     }
 
-    const result = await response.json().catch(() => ({}));
+    const result = await response.json().catch(() => ({})) as { notificationId?: string };
     console.log(`[REZ-Merchant] Notification sent successfully:`, {
       merchantId: params.merchantId,
       notificationId: result.notificationId,

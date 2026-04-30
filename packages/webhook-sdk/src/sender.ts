@@ -35,7 +35,8 @@ export interface WebhookSendResult {
 /**
  * Create HMAC-SHA256 signature for webhook
  */
-export function createWebhookSignature(
+// Renamed to avoid duplicate with verify.ts
+export function createSenderSignature(
   payload: string,
   secret: string,
   timestamp: string
@@ -61,7 +62,7 @@ export async function sendReorderSignalToRezMerchant(
   const { webhookUrl, webhookSecret, timeoutMs = 10000 } = config;
   const timestamp = new Date().toISOString();
   const payloadString = JSON.stringify(payload);
-  const signature = createWebhookSignature(payloadString, webhookSecret, timestamp);
+  const signature = createSenderSignature(payloadString, webhookSecret, timestamp);
 
   try {
     const controller = new AbortController();

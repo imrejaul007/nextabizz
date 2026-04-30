@@ -62,7 +62,7 @@ export type { WebhookPayload, WebhookHandler } from './types';
 export {
   sendReorderSignalToRezMerchant,
   buildReorderSignalPayload,
-  createWebhookSignature,
+  createSenderSignature,
   type RezMerchantWebhookPayload,
   type WebhookSendResult,
 } from './sender';
