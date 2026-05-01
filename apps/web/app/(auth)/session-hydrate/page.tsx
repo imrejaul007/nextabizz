@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { setSession, MerchantSession } from '@/lib/supabase';
 
@@ -9,7 +9,7 @@ import { setSession, MerchantSession } from '@/lib/supabase';
  * (which runs server-side and can't write to localStorage directly) and
  * stores it in localStorage, then redirects to the intended destination.
  */
-export default function SessionHydratePage() {
+function SessionHydrateContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -40,5 +40,23 @@ export default function SessionHydratePage() {
         <p className="text-gray-500 text-sm">Signing you in...</p>
       </div>
     </div>
+  );
+}
+
+// Wrap in Suspense for useSearchParams()
+export default function SessionHydratePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="text-center">
+            <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-gray-500 text-sm">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <SessionHydrateContent />
+    </Suspense>
   );
 }

@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { buildAuthorizeUrl } from '@/lib/rezOAuth';
 import { setSession, MerchantSession } from '@/lib/supabase';
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
@@ -188,5 +188,14 @@ export default function LoginPage() {
         </p>
       </footer>
     </div>
+  );
+}
+
+// Wrap in Suspense for useSearchParams()
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-[#7C3AED] via-[#6D28D9] to-[#5B21B6]" />}>
+      <LoginContent />
+    </Suspense>
   );
 }
